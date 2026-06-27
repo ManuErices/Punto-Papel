@@ -150,35 +150,7 @@ function ItemRow({ item, products, onChange, onRemove }) {
           ⚠ Ingresa el precio de venta para que el producto quede listo en el POS
         </p>
       )}
-      {cancelConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
-            border border-black/[0.08] dark:border-white/[0.1] p-6">
-            <div className="flex items-start gap-3 mb-5">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-red-500/15 text-red-500 text-lg">✕</div>
-              <div>
-                <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">¿Cancelar orden?</h3>
-                <p className="text-[12px] text-gray-500 dark:text-white/40 mt-1">
-                  La orden de <span className="font-medium text-gray-700 dark:text-white/70">{cancelConfirm.supplier}</span> quedará como cancelada. No se actualizará el stock.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => setCancelConfirm(null)}
-                className="flex-1 h-9 rounded-xl text-[12px] font-medium bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50 border border-black/[0.08] dark:border-white/[0.08]">
-                Volver
-              </button>
-              <button onClick={handleCancel} disabled={saving}
-                className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
-                {saving ? 'Cancelando...' : 'Sí, cancelar orden'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      
     </div>
   )
 }
