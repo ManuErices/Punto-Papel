@@ -9,15 +9,27 @@ const PAYMENT_LABELS = {
   transfer: 'Transferencia',
 }
 
+// Escapa caracteres HTML para evitar XSS en nombres de productos
+const esc = (str) => String(str ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+
 export default function Receipt({ receipt, onClose }) {
   const printRef = useRef(null)
 
   const handlePrint = () => {
     const content = printRef.current.innerHTML
-    const win = window.open('', '_blank', 'width=400,height=700')
-    win.document.write(`<!DOCTYPE html><html lang="es"><head>
+    // Usamos un iframe oculto en vez de window.open() para evitar bloqueos de popup
+    const iframe = document.createElement('iframe')
+    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:400px;height:700px;border:none'
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument || iframe.contentWindow.document
+    doc.open()
+    doc.write(`<!DOCTYPE html><html lang="es"><head>
       <meta charset="UTF-8"/>
-      <title>Comprobante #${String(receipt.receiptNumber).slice(-6)}</title>
+      <title>Comprobante #${esc(String(receipt.receiptNumber).slice(-6))}</title>
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -26,40 +38,41 @@ export default function Receipt({ receipt, onClose }) {
         @media print{body{padding:0}.receipt{width:100%;padding:4mm}}
       </style>
     </head><body>${content}</body></html>`)
-    win.document.close()
-    win.focus()
-    setTimeout(() => { win.print(); win.close() }, 400)
+    doc.close()
+    iframe.contentWindow.focus()
+    setTimeout(() => {
+      iframe.contentWindow.print()
+      setTimeout(() => document.body.removeChild(iframe), 1000)
+    }, 400)
   }
 
   const date    = receipt.time instanceof Date ? receipt.time : new Date()
   const dateStr = date.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const timeStr = date.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
-  const ivaAmount  = Math.round(receipt.total * 19 / 119)
-  const netAmount  = receipt.total - ivaAmount
+  const ivaAmount = Math.round(receipt.total * 19 / 119)
+  const netAmount = receipt.total - ivaAmount
 
   const receiptHTML = {
     __html: `
     <div class="receipt" style="font-family:'Inter',sans-serif;font-size:12px;color:#111;width:100%;max-width:280px;margin:0 auto">
 
-      <!-- Header -->
       <div style="text-align:center;border-bottom:1px dashed #ddd;padding-bottom:12px;margin-bottom:12px">
-        <div style="width:32px;height:32px;background:#6366f1;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:600;margin-bottom:6px">P&</div>
-        <div style="font-size:16px;font-weight:600;letter-spacing:-0.3px">Punto & Papel</div>
-        <div style="font-size:10px;color:#888;margin-top:2px">San Fernando, O'Higgins</div>
+        <div style="width:32px;height:32px;background:#6366f1;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:600;margin-bottom:6px">P&amp;</div>
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.3px">Punto &amp; Papel</div>
+        <div style="font-size:10px;color:#888;margin-top:1px">RUT: 78.396.532-1</div>
+        <div style="font-size:10px;color:#888;margin-top:1px">San Fernando, O'Higgins</div>
         <div style="display:inline-block;background:#f3f4f6;border-radius:20px;padding:2px 10px;font-size:10px;font-weight:500;color:#555;margin-top:6px">
-          Comprobante #${String(receipt.receiptNumber).slice(-6)}
+          Comprobante #${esc(String(receipt.receiptNumber).slice(-6))}
         </div>
       </div>
 
-      <!-- Meta -->
       <div style="margin-bottom:10px">
-        ${[['Fecha', dateStr], ['Hora', timeStr], ['Forma de pago', PAYMENT_LABELS[receipt.payment] || receipt.payment]]
-          .map(([l, v]) => `<div style="display:flex;justify-content:space-between;font-size:10px;color:#555;padding:2px 0"><span>${l}</span><span style="font-weight:500;color:#111">${v}</span></div>`).join('')}
+        ${[['Fecha', dateStr], ['Hora', timeStr], ['Forma de pago', PAYMENT_LABELS[receipt.payment] || esc(receipt.payment)]]
+          .map(([l, v]) => `<div style="display:flex;justify-content:space-between;font-size:10px;color:#555;padding:2px 0"><span>${esc(l)}</span><span style="font-weight:500;color:#111">${esc(v)}</span></div>`).join('')}
       </div>
 
       <hr style="border:none;border-top:1px dashed #ddd;margin:10px 0"/>
 
-      <!-- Items -->
       <table style="width:100%;border-collapse:collapse">
         <thead>
           <tr>
@@ -69,24 +82,23 @@ export default function Receipt({ receipt, onClose }) {
           </tr>
         </thead>
         <tbody>
-          ${receipt.items?.map((item) => `
+          ${(receipt.items || []).map((item) => `
             <tr>
               <td style="font-size:11px;padding:4px 0;border-bottom:1px solid #f5f5f5;vertical-align:top">
-                <div style="font-weight:500;color:#111">${item.name}</div>
-                <div style="font-size:9px;color:#aaa;margin-top:1px">${fmt(item.price)} c/u${item.discount ? ` · ${item.discount}% desc.` : ''}</div>
+                <div style="font-weight:500;color:#111">${esc(item.name)}</div>
+                <div style="font-size:9px;color:#aaa;margin-top:1px">${fmt(item.price)} c/u${item.discount ? ` · ${esc(String(item.discount))}% desc.` : ''}</div>
               </td>
-              <td style="font-size:11px;padding:4px 0;border-bottom:1px solid #f5f5f5;text-align:center;color:#555">${item.qty}</td>
+              <td style="font-size:11px;padding:4px 0;border-bottom:1px solid #f5f5f5;text-align:center;color:#555">${esc(String(item.qty))}</td>
               <td style="font-size:11px;padding:4px 0;border-bottom:1px solid #f5f5f5;text-align:right;font-weight:500;color:#111">${fmt(item.subtotal)}</td>
             </tr>`).join('')}
         </tbody>
       </table>
 
-      <!-- Totals -->
       <table style="width:100%;margin-top:8px">
         <tbody>
           ${receipt.discount > 0 ? `
           <tr>
-            <td style="font-size:11px;color:#555;padding:2px 0">Descuento (${receipt.discount}%)</td>
+            <td style="font-size:11px;color:#555;padding:2px 0">Descuento (${esc(String(receipt.discount))}%)</td>
             <td style="font-size:11px;color:#e74c3c;padding:2px 0;text-align:right">-${fmt(receipt.subtotal - receipt.total)}</td>
           </tr>` : ''}
           <tr>
@@ -114,10 +126,9 @@ export default function Receipt({ receipt, onClose }) {
         </tbody>
       </table>
 
-      <!-- Footer -->
       <div style="text-align:center;margin-top:16px;padding-top:12px;border-top:1px dashed #ddd">
         <div style="font-size:11px;font-weight:500;color:#111">¡Gracias por su compra!</div>
-        <div style="font-size:9px;color:#aaa;margin-top:3px">Punto & Papel · San Fernando</div>
+        <div style="font-size:9px;color:#aaa;margin-top:3px">Punto &amp; Papel · RUT 78.396.532-1 · San Fernando</div>
         <div style="font-size:9px;color:#ccc;margin-top:8px">Comprobante interno — no válido como boleta</div>
       </div>
     </div>`
@@ -154,7 +165,6 @@ export default function Receipt({ receipt, onClose }) {
           </div>
         </div>
 
-        {/* Change highlight */}
         {receipt.change > 0 && (
           <div className="px-5 pb-4">
             <div className="flex items-center justify-between px-4 py-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">

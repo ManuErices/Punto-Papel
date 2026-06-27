@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getCashflowToday, addCashEntry, createCashClose, getCashCloses } from '../firebase/cashflow'
+import { getCashflowToday, getCashflowByRange, addCashEntry, createCashClose, getCashCloses, createCashOpen, getTodayCashOpen } from '../firebase/cashflow'
 import { getSalesByRange } from '../firebase/sales'
 import { voidSale } from '../firebase/sales'
 import { useAuth } from '../context/AuthContext'
@@ -239,6 +239,60 @@ function CashCloseModal({ expectedCash, onConfirm, onCancel }) {
   )
 }
 
+
+function OpenCashForm({ onConfirm, onCancel }) {
+  const [amount, setAmount] = useState('')
+  const [notes, setNotes]   = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handleConfirm = async () => {
+    if (!amount || Number(amount) < 0) return
+    setSaving(true)
+    await onConfirm(Number(amount), notes)
+    setSaving(false)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">
+          Fondo inicial (CLP) *
+        </label>
+        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+          placeholder="Ej: 20000" autoFocus
+          className="h-10 rounded-xl px-3 text-sm bg-black/[0.04] dark:bg-white/[0.05]
+            border border-black/[0.08] dark:border-white/[0.08]
+            text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25
+            focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">
+          Notas (opcional)
+        </label>
+        <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Ej: Fondo preparado por Manuel"
+          className="h-9 rounded-xl px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
+            border border-black/[0.08] dark:border-white/[0.08]
+            text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25
+            focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+      </div>
+      <div className="flex gap-2 mt-2">
+        <button onClick={onCancel}
+          className="flex-1 h-9 rounded-xl text-[12px] font-medium
+            bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50
+            border border-black/[0.08] dark:border-white/[0.08]">
+          Cancelar
+        </button>
+        <button onClick={handleConfirm} disabled={!amount || saving}
+          className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-50"
+          style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+          {saving ? 'Guardando...' : 'Registrar apertura'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function Treasury() {
   const { user }                = useAuth()
   const dateRange               = useDateRange('today')
@@ -251,6 +305,8 @@ export default function Treasury() {
   const [saving, setSaving]     = useState(false)
   const [selectedSale, setSelectedSale] = useState(null)
   const [showClose, setShowClose]       = useState(false)
+  const [showOpen, setShowOpen]         = useState(false)
+  const [cashOpen, setCashOpen]         = useState(null)
   const [activeTab, setActiveTab]       = useState('movements')
 
   const load = async () => {
@@ -274,7 +330,8 @@ export default function Treasury() {
   const cashSales = sales
     .filter((s) => s.paymentMethod === 'cash')
     .reduce((a, s) => a + s.total, 0)
-  const expectedCash = cashSales + inflows - outflows
+  const fondoInicial  = cashOpen?.amount || 0
+  const expectedCash  = fondoInicial + cashSales + inflows - outflows
 
   const handleAdd = async () => {
     if (!amount || !concept) return
@@ -287,6 +344,12 @@ export default function Treasury() {
 
   const handleVoid = async (saleId, reason) => {
     await voidSale({ saleId, reason, userId: user.uid })
+    await load()
+  }
+
+  const handleCashOpen = async (amount, notes) => {
+    await createCashOpen({ amount, userId: user.uid, notes })
+    setShowOpen(false)
     await load()
   }
 
@@ -309,11 +372,38 @@ export default function Treasury() {
             customTo={dateRange.customTo} setCustomTo={dateRange.setCustomTo}
             onApply={load}
           />
+          {!cashOpen && dateRange.preset === 'today' && (
+            <Button onClick={() => setShowOpen(true)}>
+              Apertura de caja
+            </Button>
+          )}
           <Button onClick={() => setShowClose(true)} variant="secondary">
             Cierre de caja
           </Button>
         </div>
       </div>
+
+      {/* Banner apertura de caja */}
+      {dateRange.preset === 'today' && cashOpen && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-emerald-500/[0.08] border border-emerald-500/20">
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <p className="text-[12px] text-emerald-600 dark:text-emerald-400">
+            Apertura registrada — Fondo inicial: <span className="font-semibold tabular-nums">{fmt(cashOpen.amount)}</span>
+            {cashOpen.notes ? ` · ${cashOpen.notes}` : ''}
+          </p>
+        </div>
+      )}
+      {dateRange.preset === 'today' && !cashOpen && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-amber-500/[0.08] border border-amber-500/20">
+          <p className="text-[12px] text-amber-600 dark:text-amber-400">
+            Sin apertura registrada hoy — el cierre no considerará fondo inicial
+          </p>
+          <button onClick={() => setShowOpen(true)}
+            className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 shrink-0">
+            Registrar ahora →
+          </button>
+        </div>
+      )}
 
       {/* Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -515,6 +605,21 @@ export default function Treasury() {
           </div>
         </Card>
       </div>
+
+      {showOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={(e) => e.target === e.currentTarget && setShowOpen(false)}>
+          <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
+            border border-black/[0.08] dark:border-white/[0.1] p-6">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Apertura de caja</h2>
+            <p className="text-[12px] text-gray-400 dark:text-white/30 mb-5">
+              Registra el dinero con que se abre la caja hoy (fondo de cambio)
+            </p>
+            <OpenCashForm onConfirm={handleCashOpen} onCancel={() => setShowOpen(false)} />
+          </div>
+        </div>
+      )}
 
       {selectedSale && (
         <SaleDetailModal

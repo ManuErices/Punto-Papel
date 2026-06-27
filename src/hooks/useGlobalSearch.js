@@ -22,7 +22,7 @@ export function useGlobalSearch() {
     ])
     const data = {
       products:  prodSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
-      sales:     salesSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      sales:     salesSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => s.status !== 'void'),
       purchases: purchSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
     }
     setCache(data)

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from '../context/AuthContext'
 import { subscribeProducts, addProduct, updateProduct, deleteProduct } from '../firebase/products'
 import { addCashEntry } from '../firebase/cashflow'
 import { Card, Button, Badge, Input } from '../components/ui'
@@ -98,6 +99,7 @@ function ShrinkageModal({ product, newStock, onConfirm, onCancel }) {
 }
 
 export default function Inventory() {
+  const { user } = useAuth()
   const [products, setProducts]           = useState([])
   const [search, setSearch]               = useState('')
   const [form, setForm]                   = useState(EMPTY)
@@ -170,7 +172,7 @@ export default function Inventory() {
     const { product, newStock } = shrinkageItem
     await updateProduct(product.id, { stock: newStock })
     await addCashEntry({
-      type: 'out', amount: 0, userId: 'system',
+      type: 'out', amount: 0, userId: user?.uid || 'system',
       concept: `Ajuste stock: ${product.name} (-${product.stock - newStock} ${product.unit || 'uds.'}) · ${reason}${notes ? ` · ${notes}` : ''}`,
     })
     setShrinkageItem(null)

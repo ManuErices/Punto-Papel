@@ -120,6 +120,9 @@ export default function Dashboard() {
   const [lowStock, setLowStock]         = useState([])
   const [cashBalance, setCash]          = useState(0)
   const [loading, setLoading]           = useState(true)
+  const [dailyGoal, setDailyGoal]       = useState(() => Number(localStorage.getItem('pp-daily-goal') || 0))
+  const [editingGoal, setEditingGoal]   = useState(false)
+  const [goalInput, setGoalInput]       = useState('')
 
   useEffect(() => {
     const load = async () => {
@@ -173,6 +176,12 @@ export default function Dashboard() {
     }
     load()
   }, [])
+
+  const saveGoal = (val) => {
+    const n = Number(val)
+    if (n > 0) { setDailyGoal(n); localStorage.setItem('pp-daily-goal', String(n)) }
+    setEditingGoal(false)
+  }
 
   const totalHoy        = salesToday.reduce((a, s) => a + s.total, 0)
   const avgTicket       = salesToday.length ? Math.round(totalHoy / salesToday.length) : 0
@@ -235,6 +244,70 @@ export default function Dashboard() {
           <p className="text-[11px] text-white/40 mt-1">efectivo + débito</p>
         </div>
       </div>
+
+      {/* Meta de ventas diaria */}
+      <Card>
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-[13px] font-medium text-gray-900 dark:text-white/80">Meta del día</h3>
+              {dailyGoal > 0 && (
+                <span className={`text-[11px] font-medium ${totalHoy >= dailyGoal ? 'text-emerald-500' : 'text-gray-400 dark:text-white/30'}`}>
+                  {totalHoy >= dailyGoal ? '✓ ¡Cumplida!' : `${Math.round((totalHoy/dailyGoal)*100)}%`}
+                </span>
+              )}
+            </div>
+            {dailyGoal > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                <div className="w-full h-2.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(100, Math.round((totalHoy/dailyGoal)*100))}%`,
+                      background: totalHoy >= dailyGoal
+                        ? 'linear-gradient(90deg,#059669,#10b981)'
+                        : 'linear-gradient(90deg,#6366f1,#8b5cf6)'
+                    }} />
+                </div>
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-gray-500 dark:text-white/40 tabular-nums">{fmt(totalHoy)}</span>
+                  <span className="text-gray-400 dark:text-white/25 tabular-nums">meta: {fmt(dailyGoal)}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-gray-400 dark:text-white/30">Sin meta configurada</p>
+            )}
+          </div>
+          <div className="ml-4 shrink-0">
+            {editingGoal ? (
+              <div className="flex items-center gap-2">
+                <input type="number" value={goalInput}
+                  onChange={(e) => setGoalInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveGoal(goalInput)}
+                  placeholder="Ej: 50000" autoFocus
+                  className="h-8 w-28 rounded-lg px-2 text-[12px] text-center
+                    bg-black/[0.04] dark:bg-white/[0.05]
+                    border border-black/[0.08] dark:border-white/[0.08]
+                    text-gray-900 dark:text-white
+                    focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+                <button onClick={() => saveGoal(goalInput)}
+                  className="h-8 px-3 rounded-lg text-[12px] font-medium text-white"
+                  style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                  OK
+                </button>
+                <button onClick={() => setEditingGoal(false)}
+                  className="h-8 px-2 rounded-lg text-[12px] text-gray-400 dark:text-white/30">
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => { setGoalInput(String(dailyGoal || '')); setEditingGoal(true) }}
+                className="text-[11px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
+                {dailyGoal > 0 ? 'Cambiar meta' : 'Poner meta'}
+              </button>
+            )}
+          </div>
+        </div>
+      </Card>
 
       {/* Weekly chart + summary */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">

@@ -38,11 +38,18 @@ export function useDateRange(defaultKey = '7d') {
 }
 
 export default function DateRangePicker({ preset, setPreset, customFrom, setCustomFrom, customTo, setCustomTo, onApply }) {
+  // Rastrea si las fechas cambiaron desde el último "Aplicar"
+  const [dirty, setDirty] = useState(false)
+
+  const handleFromChange = (v) => { setCustomFrom(v); setDirty(true) }
+  const handleToChange   = (v) => { setCustomTo(v);   setDirty(true) }
+  const handleApply      = ()  => { setDirty(false);  onApply() }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-0.5 p-0.5 rounded-xl bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.07] dark:border-white/[0.07]">
         {PRESETS.map((p) => (
-          <button key={p.key} onClick={() => setPreset(p.key)}
+          <button key={p.key} onClick={() => { setPreset(p.key); setDirty(false) }}
             className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${preset === p.key ? 'text-white' : 'text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60'}`}
             style={preset === p.key ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
             {p.label}
@@ -51,13 +58,17 @@ export default function DateRangePicker({ preset, setPreset, customFrom, setCust
       </div>
       {preset === 'custom' && (
         <div className="flex items-center gap-2">
-          <input type="date" value={customFrom} max={customTo} onChange={(e) => setCustomFrom(e.target.value)}
+          <input type="date" value={customFrom} max={customTo}
+            onChange={(e) => handleFromChange(e.target.value)}
             className="h-8 rounded-lg px-2 text-[12px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
           <span className="text-[11px] text-gray-400 dark:text-white/30">→</span>
-          <input type="date" value={customTo} min={customFrom} max={toInputDate(new Date())} onChange={(e) => setCustomTo(e.target.value)}
+          <input type="date" value={customTo} min={customFrom} max={toInputDate(new Date())}
+            onChange={(e) => handleToChange(e.target.value)}
             className="h-8 rounded-lg px-2 text-[12px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
-          <button onClick={onApply} className="h-8 px-3 rounded-lg text-[12px] font-medium text-white" style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
-            Aplicar
+          <button onClick={handleApply}
+            className={`h-8 px-3 rounded-lg text-[12px] font-medium text-white transition-all ${dirty ? 'ring-2 ring-indigo-400 ring-offset-1' : ''}`}
+            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+            {dirty ? 'Aplicar ●' : 'Aplicar'}
           </button>
         </div>
       )}

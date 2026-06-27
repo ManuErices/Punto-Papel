@@ -71,3 +71,40 @@ export const getLastCashClose = async () => {
   if (snap.empty) return null
   return { id: snap.docs[0].id, ...snap.docs[0].data() }
 }
+
+// ─── Apertura de caja ─────────────────────────────────────────────────────────
+const COL_OPEN = 'cashOpens'
+
+export const createCashOpen = ({ amount, userId, notes }) =>
+  addDoc(collection(db, COL_OPEN), {
+    amount,
+    notes: notes || '',
+    userId,
+    date:      new Date().toISOString().slice(0, 10),
+    createdAt: serverTimestamp(),
+  })
+
+export const getTodayCashOpen = async () => {
+  const start = new Date(); start.setHours(0, 0, 0, 0)
+  const snap  = await getDocs(
+    query(collection(db, COL_OPEN),
+      where('createdAt', '>=', Timestamp.fromDate(start)),
+      orderBy('createdAt', 'desc')
+    )
+  )
+  if (snap.empty) return null
+  return { id: snap.docs[0].id, ...snap.docs[0].data() }
+}
+
+export const getCashBalanceByMethod = async () => {
+  const entries = await getCashflowToday()
+  const result = { cash: 0, debit: 0, transfer: 0, total: 0 }
+  for (const e of entries) {
+    const sign = e.type === 'in' ? 1 : -1
+    result.total += sign * e.amount
+    if (e.paymentMethod === 'cash')     result.cash     += sign * e.amount
+    if (e.paymentMethod === 'debit')    result.debit    += sign * e.amount
+    if (e.paymentMethod === 'transfer') result.transfer += sign * e.amount
+  }
+  return result
+}

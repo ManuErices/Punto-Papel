@@ -51,6 +51,7 @@ function FacturaCard({ doc, onImport }) {
   const [uploading, setUploading] = useState(false)
   const [importing, setImporting] = useState(false)
   const [items, setItems]         = useState(doc.items || null)
+  const [cardError, setCardError] = useState('')
   const fileRef                   = useRef(null)
 
   const handleXML = async (e) => {
@@ -62,7 +63,7 @@ function FacturaCard({ doc, onImport }) {
       const result     = await parsearXML(xmlContent, doc.id)
       setItems(result.data.items)
     } catch (err) {
-      alert('Error al leer el XML: ' + err.message)
+      setCardError('Error al leer el XML: ' + err.message)
     } finally {
       setUploading(false)
     }
@@ -74,7 +75,7 @@ function FacturaCard({ doc, onImport }) {
       await importarFactura(doc.id, items, confirmar)
       onImport()
     } catch (err) {
-      alert('Error al importar: ' + err.message)
+      setCardError('Error al importar: ' + err.message)
     } finally {
       setImporting(false)
     }
@@ -162,6 +163,12 @@ function FacturaCard({ doc, onImport }) {
             </div>
           )}
 
+          {cardError && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20">
+              <p className="text-[11px] text-red-500 dark:text-red-400">{cardError}</p>
+              <button onClick={() => setCardError('')} className="text-red-400 hover:text-red-500 ml-2 text-[11px]">✕</button>
+            </div>
+          )}
           {/* Botones de importación */}
           <div className="flex gap-2">
             <Button
@@ -281,7 +288,7 @@ export default function RCVImport() {
                 border border-black/[0.08] dark:border-white/[0.08]
                 text-gray-900 dark:text-white
                 focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
-              {[2024, 2025, 2026].map((y) => (
+              {Array.from({ length: new Date().getFullYear() - 2024 + 1 }, (_, i) => 2024 + i).map((y) => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>

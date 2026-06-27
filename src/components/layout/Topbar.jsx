@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTheme } from '../../context/ThemeContext'
 import { useAuth } from '../../context/AuthContext'
 import { logout } from '../../firebase/auth'
@@ -8,6 +9,7 @@ export default function Topbar() {
   const { theme, toggle }  = useTheme()
   const { user }           = useAuth()
   const search             = useGlobalSearch()
+  const [showLogout, setShowLogout] = useState(false)
 
   const initials = user?.displayName
     ?.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
@@ -36,7 +38,7 @@ export default function Topbar() {
           </span>
         </div>
 
-        {/* Search trigger — centro */}
+        {/* Search trigger */}
         <button
           onClick={search.open}
           className="flex-1 max-w-sm flex items-center gap-2 h-8 px-3 rounded-xl
@@ -62,8 +64,6 @@ export default function Topbar() {
 
         {/* Right */}
         <div className="flex items-center gap-2 shrink-0">
-
-          {/* Theme toggle */}
           <div className="flex items-center gap-0.5 p-0.5 rounded-full
             bg-black/[0.05] dark:bg-white/[0.06]
             border border-black/[0.08] dark:border-white/[0.1]">
@@ -74,28 +74,58 @@ export default function Topbar() {
                     ? 'text-white'
                     : 'text-gray-400 dark:text-white/30 hover:text-gray-600 dark:hover:text-white/50'
                   }`}
-                style={theme === t
-                  ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }
-                  : {}
-                }>
+                style={theme === t ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
                 {t === 'light' ? 'Día' : 'Noche'}
               </button>
             ))}
           </div>
 
-          {/* User */}
           <span className="text-xs text-gray-400 dark:text-white/40 hidden md:block max-w-[120px] truncate">
             {user?.displayName || user?.email}
           </span>
-          <button onClick={logout}
+          <button
+            onClick={() => setShowLogout(true)}
             className="w-7 h-7 rounded-full flex items-center justify-center
-              text-white text-[11px] font-semibold shrink-0"
+              text-white text-[11px] font-semibold shrink-0 cursor-pointer"
             style={{ background: 'linear-gradient(135deg,#f59e0b,#ef4444)' }}
             title="Cerrar sesión">
             {initials}
           </button>
         </div>
       </header>
+
+      {/* Modal confirmación logout */}
+      {showLogout && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={() => setShowLogout(false)}>
+          <div className="w-full max-w-xs bg-white dark:bg-[#141420] rounded-2xl
+            border border-black/[0.08] dark:border-white/[0.1] p-6"
+            onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white mb-1">¿Cerrar sesión?</h3>
+            <p className="text-[12px] text-gray-500 dark:text-white/40 mb-5">
+              Se cerrará la sesión de{' '}
+              <span className="font-medium text-gray-700 dark:text-white/70">
+                {user?.displayName || user?.email}
+              </span>.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowLogout(false)}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium
+                  bg-black/[0.04] dark:bg-white/[0.05]
+                  text-gray-600 dark:text-white/50
+                  border border-black/[0.08] dark:border-white/[0.08]">
+                Cancelar
+              </button>
+              <button onClick={() => { setShowLogout(false); logout() }}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white"
+                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
+                Cerrar sesión
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Global search modal */}
       <GlobalSearch

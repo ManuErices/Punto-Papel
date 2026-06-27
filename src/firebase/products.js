@@ -39,9 +39,12 @@ export const deleteProduct = (id) =>
 export const decrementStock = (id, qty = 1) =>
   updateDoc(doc(db, COL, id), { stock: increment(-qty) })
 
-export const getLowStockProducts = async (threshold = 5) => {
-  const snap = await getDocs(
-    query(collection(db, COL), where('stock', '<=', threshold))
-  )
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+// Firestore no permite comparar dos campos del mismo documento en una query,
+// así que traemos todos los productos y filtramos en el cliente usando el
+// minStock individual de cada uno. El fallback es 5 si minStock no está definido.
+export const getLowStockProducts = async () => {
+  const snap = await getDocs(query(collection(db, COL), orderBy('name')))
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((p) => p.stock <= (p.minStock ?? 5))
 }

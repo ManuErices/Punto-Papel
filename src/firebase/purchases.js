@@ -85,3 +85,10 @@ export const getPurchasesByRange = async (from, to) => {
   )
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
 }
+
+
+export const cancelPurchase = (purchaseId) =>
+  updateDoc(doc(db, COL, purchaseId), {
+    status: 'cancelado',
+    cancelledAt: serverTimestamp(),
+  })

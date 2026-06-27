@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { createPurchase, getPurchases, receivePurchase, SUPPLIERS } from '../firebase/purchases'
+import { createPurchase, getPurchases, receivePurchase, cancelPurchase } from '../firebase/purchases'
+import { getSuppliers } from '../firebase/suppliers'
 import { getProducts } from '../firebase/products'
 import { useAuth } from '../context/AuthContext'
 import { Card, Button, Badge } from '../components/ui'
@@ -149,6 +150,35 @@ function ItemRow({ item, products, onChange, onRemove }) {
           ⚠ Ingresa el precio de venta para que el producto quede listo en el POS
         </p>
       )}
+      {cancelConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}>
+          <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
+            border border-black/[0.08] dark:border-white/[0.1] p-6">
+            <div className="flex items-start gap-3 mb-5">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-red-500/15 text-red-500 text-lg">✕</div>
+              <div>
+                <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">¿Cancelar orden?</h3>
+                <p className="text-[12px] text-gray-500 dark:text-white/40 mt-1">
+                  La orden de <span className="font-medium text-gray-700 dark:text-white/70">{cancelConfirm.supplier}</span> quedará como cancelada. No se actualizará el stock.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setCancelConfirm(null)}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50 border border-black/[0.08] dark:border-white/[0.08]">
+                Volver
+              </button>
+              <button onClick={handleCancel} disabled={saving}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
+                {saving ? 'Cancelando...' : 'Sí, cancelar orden'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -156,6 +186,7 @@ function ItemRow({ item, products, onChange, onRemove }) {
 export default function Purchases() {
   const { user }                          = useAuth()
   const [purchases, setPurchases]         = useState([])
+  const [suppliers, setSuppliers]         = useState([])
   const [products, setProducts]           = useState([])
   const [loading, setLoading]             = useState(true)
   const [showForm, setShowForm]           = useState(false)
@@ -164,11 +195,14 @@ export default function Purchases() {
   const [items, setItems]                 = useState([emptyItem()])
   const [saving, setSaving]               = useState(false)
   const [receiveItems, setReceiveItems]   = useState([])
+  const [filterStatus, setFilterStatus]   = useState('all')
+  const [cancelConfirm, setCancelConfirm] = useState(null)
 
   const load = async () => {
-    const [p, prods] = await Promise.all([getPurchases(), getProducts()])
+    const [p, prods, sups] = await Promise.all([getPurchases(), getProducts(), getSuppliers()])
     setPurchases(p)
     setProducts(prods)
+    setSuppliers(sups)
     setLoading(false)
   }
 
@@ -231,6 +265,16 @@ export default function Purchases() {
     setShowReceive(purchase)
   }
 
+  const handleCancel = async () => {
+    if (!cancelConfirm) return
+    setSaving(true)
+    try {
+      await cancelPurchase(cancelConfirm.id)
+      setCancelConfirm(null)
+      await load()
+    } finally { setSaving(false) }
+  }
+
   const handleReceive = async () => {
     setSaving(true)
     try {
@@ -241,6 +285,10 @@ export default function Purchases() {
       setSaving(false)
     }
   }
+
+  const filteredPurchases = filterStatus === 'all'
+    ? purchases
+    : purchases.filter((p) => p.status === filterStatus)
 
   const totalCompras = purchases.reduce((a, p) => a + (p.total || 0), 0)
   const pendientes   = purchases.filter((p) => p.status === 'pendiente').length
@@ -271,6 +319,17 @@ export default function Purchases() {
         ))}
       </div>
 
+      {/* Filtros */}
+      <div className="flex items-center gap-1 p-0.5 rounded-xl bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.07] dark:border-white/[0.07] self-start">
+        {[['all','Todas'],['pendiente','Pendientes'],['recibido','Recibidas']].map(([key,label]) => (
+          <button key={key} onClick={() => setFilterStatus(key)}
+            className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${filterStatus === key ? 'text-white' : 'text-gray-500 dark:text-white/40 hover:text-gray-700'}`}
+            style={filterStatus === key ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Table */}
       <Card className="overflow-hidden p-0">
         {loading ? (
@@ -288,10 +347,10 @@ export default function Purchases() {
                 </tr>
               </thead>
               <tbody>
-                {purchases.length === 0 && (
+                {filteredPurchases.length === 0 && (
                   <tr><td colSpan={7} className="text-center text-sm text-gray-400 dark:text-white/25 py-12">Sin órdenes. Crea la primera.</td></tr>
                 )}
-                {purchases.map((p) => {
+                {filteredPurchases.map((p) => {
                   const newItems = p.items?.filter((i) => i.isNew)?.length || 0
                   return (
                     <tr key={p.id} className="border-b border-black/[0.04] dark:border-white/[0.04] hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors">
@@ -315,10 +374,16 @@ export default function Purchases() {
                       </td>
                       <td className="px-4 py-3">
                         {p.status === 'pendiente' && (
-                          <button onClick={() => openReceive(p)}
-                            className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
-                            Marcar recibido
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => openReceive(p)}
+                              className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
+                              Marcar recibido
+                            </button>
+                            <button onClick={() => setCancelConfirm({ id: p.id, supplier: p.supplier })}
+                              className="text-[11px] text-red-400 hover:text-red-500 transition-colors">
+                              Cancelar
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -343,7 +408,7 @@ export default function Purchases() {
                 <select value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })}
                   className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
                   <option value="">Seleccionar proveedor</option>
-                  {SUPPLIERS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {suppliers.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1">
@@ -436,6 +501,35 @@ export default function Purchases() {
           </div>
         </div>
       )}
+      {cancelConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}>
+          <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
+            border border-black/[0.08] dark:border-white/[0.1] p-6">
+            <div className="flex items-start gap-3 mb-5">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-red-500/15 text-red-500 text-lg">✕</div>
+              <div>
+                <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">¿Cancelar orden?</h3>
+                <p className="text-[12px] text-gray-500 dark:text-white/40 mt-1">
+                  La orden de <span className="font-medium text-gray-700 dark:text-white/70">{cancelConfirm.supplier}</span> quedará como cancelada. No se actualizará el stock.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setCancelConfirm(null)}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50 border border-black/[0.08] dark:border-white/[0.08]">
+                Volver
+              </button>
+              <button onClick={handleCancel} disabled={saving}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
+                {saving ? 'Cancelando...' : 'Sí, cancelar orden'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

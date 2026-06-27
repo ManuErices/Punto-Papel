@@ -42,12 +42,20 @@ export default function Suppliers() {
   const [form, setForm]               = useState(EMPTY)
   const [saving, setSaving]           = useState(false)
   const [loading, setLoading]         = useState(true)
+  const [loadError, setLoadError]     = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(null)
 
   const load = async () => {
-    const [s, p] = await Promise.all([getSuppliers(), getPurchases()])
-    setSuppliers(s)
-    setPurchases(p)
-    setLoading(false)
+    try {
+      const [s, p] = await Promise.all([getSuppliers(), getPurchases()])
+      setSuppliers(s)
+      setPurchases(p)
+    } catch (err) {
+      setLoadError(true)
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [])
@@ -96,10 +104,14 @@ export default function Suppliers() {
     } finally { setSaving(false) }
   }
 
-  const handleDelete = async (id) => {
-    if (!confirm('¿Eliminar este proveedor?')) return
-    await deleteSupplier(id)
-    if (selected?.id === id) setSelected(null)
+  const handleDelete = (id, name, hasOrders) =>
+    setDeleteConfirm({ id, name, hasOrders })
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return
+    await deleteSupplier(deleteConfirm.id)
+    if (selected?.id === deleteConfirm.id) setSelected(null)
+    setDeleteConfirm(null)
     await load()
   }
 
@@ -136,7 +148,9 @@ export default function Suppliers() {
               focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
           />
 
-          {loading ? (
+          {loadError ? (
+            <Card><p className="text-sm text-red-400 text-center py-10">Error al cargar proveedores. Recarga la página.</p></Card>
+          ) : loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
             </div>
@@ -243,7 +257,7 @@ export default function Suppliers() {
                       className="text-[11px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
                       Editar
                     </button>
-                    <button onClick={() => handleDelete(selected.id)}
+                    <button onClick={() => { const st = supplierStats(selected.id, selected.name); handleDelete(selected.id, selected.name, st.count > 0) }}
                       className="text-[11px] text-red-400 hover:text-red-500 transition-colors">
                       Eliminar
                     </button>
@@ -445,6 +459,45 @@ export default function Suppliers() {
           </div>
         </div>
       )}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.75)' }}>
+          <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
+            border border-black/[0.08] dark:border-white/[0.1] p-6">
+            <div className="flex items-start gap-3 mb-5">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0
+                bg-red-500/15 text-red-500 text-lg">✕</div>
+              <div>
+                <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">¿Eliminar proveedor?</h3>
+                <p className="text-[12px] text-gray-500 dark:text-white/40 mt-1">
+                  <span className="font-medium text-gray-700 dark:text-white/70">{deleteConfirm.name}</span>
+                  {' '}será eliminado permanentemente.
+                </p>
+                {deleteConfirm.hasOrders && (
+                  <p className="text-[11px] text-amber-500 dark:text-amber-400 mt-2 bg-amber-500/10 rounded-lg px-2 py-1.5">
+                    ⚠ Este proveedor tiene compras asociadas. El historial se mantendrá pero quedará sin proveedor vinculado.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteConfirm(null)}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium
+                  bg-black/[0.04] dark:bg-white/[0.05]
+                  text-gray-600 dark:text-white/50
+                  border border-black/[0.08] dark:border-white/[0.08]">
+                Cancelar
+              </button>
+              <button onClick={confirmDelete}
+                className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white"
+                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

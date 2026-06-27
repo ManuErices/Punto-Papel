@@ -61,12 +61,13 @@ export const createSale = async ({ items, total, subtotal, discount, paymentMeth
 
   // 4. Registrar ingreso en cashflow automáticamente
   await addDoc(collection(db, COL_CASH), {
-    type:      'in',
-    amount:    total,
-    concept:   `Venta #${String(receiptNumber).slice(-6)}`,
-    saleId:    saleRef.id,
+    type:          'in',
+    amount:        total,
+    concept:       `Venta #${String(receiptNumber).slice(-6)}`,
+    saleId:        saleRef.id,
+    paymentMethod, // guardamos el método para desglosar caja por tipo
     userId,
-    createdAt: serverTimestamp(),
+    createdAt:     serverTimestamp(),
   })
 
   return saleRef

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getSalesByRange } from '../firebase/sales'
+import { getProducts } from '../firebase/products'
 import { Card, Badge } from '../components/ui'
 import DateRangePicker, { useDateRange } from '../components/DateRangePicker'
 
@@ -8,8 +9,9 @@ const fmt = (n) =>
 
 export default function Reports() {
   const dateRange          = useDateRange('7d')
-  const [sales, setSales]  = useState([])
-  const [loading, setLoad] = useState(true)
+  const [sales, setSales]       = useState([])
+  const [allProducts, setAllProducts] = useState([])
+  const [loading, setLoad]      = useState(true)
 
   const load = async () => {
     setLoad(true)
@@ -18,7 +20,11 @@ export default function Reports() {
     setLoad(false)
   }
 
-  useEffect(() => { load() }, [dateRange.preset])
+  useEffect(() => {
+    getProducts().then(setAllProducts)
+  }, [])
+
+  useEffect(() => { if (dateRange.preset !== 'custom') load() }, [dateRange.preset])
 
   const totalRevenue = sales.reduce((a, s) => a + s.total, 0)
   const avgTicket    = sales.length ? Math.round(totalRevenue / sales.length) : 0
@@ -43,6 +49,26 @@ export default function Reports() {
   const byPayment = {}
   sales.forEach((s) => { byPayment[s.paymentMethod || 'cash'] = (byPayment[s.paymentMethod || 'cash'] || 0) + s.total })
   const paymentLabels = { cash: 'Efectivo', debit: 'Débito', transfer: 'Transferencia' }
+
+  // Horas pico
+  const byHour = {}
+  sales.forEach((s) => {
+    if (!s.createdAt?.toDate) return
+    const h = s.createdAt.toDate().getHours()
+    if (!byHour[h]) byHour[h] = { count: 0, total: 0 }
+    byHour[h].count++
+    byHour[h].total += s.total
+  })
+  const hourEntries = Object.entries(byHour)
+    .map(([h, v]) => ({ hour: Number(h), ...v }))
+    .sort((a, b) => a.hour - b.hour)
+  const maxHourCount = Math.max(...hourEntries.map((h) => h.count), 1)
+
+  // Productos sin movimiento en el período
+  const soldIds = new Set(sales.flatMap((s) => s.items?.map((i) => i.productId) || []))
+  const noMovement = allProducts.filter((p) => !soldIds.has(p.id) && p.stock > 0)
+    .sort((a, b) => b.stock - a.stock)
+    .slice(0, 10)
 
   return (
     <div className="flex flex-col gap-4">
@@ -153,6 +179,54 @@ export default function Reports() {
                   </div>
                 ))
               })()}
+            </Card>
+
+            <Card>
+              <h3 className="text-[13px] font-medium text-gray-900 dark:text-white/80 mb-4">Horas pico</h3>
+              {hourEntries.length === 0 ? (
+                <p className="text-xs text-gray-400 dark:text-white/25 text-center py-6">Sin datos en este período</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {hourEntries.map(({ hour, count, total }) => (
+                    <div key={hour} className="flex items-center gap-3">
+                      <span className="text-[11px] text-gray-500 dark:text-white/45 w-12 shrink-0 tabular-nums">
+                        {String(hour).padStart(2,'0')}:00
+                      </span>
+                      <div className="flex-1 h-[6px] bg-black/[0.06] dark:bg-white/[0.08] rounded-full overflow-hidden">
+                        <div className="h-full rounded-full"
+                          style={{ width: `${Math.round((count/maxHourCount)*100)}%`, background: 'linear-gradient(90deg,#6366f1,#8b5cf6)' }} />
+                      </div>
+                      <span className="text-[11px] text-gray-400 dark:text-white/30 w-16 text-right tabular-nums shrink-0">
+                        {count} venta{count !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card>
+              <h3 className="text-[13px] font-medium text-gray-900 dark:text-white/80 mb-1">Sin movimiento</h3>
+              <p className="text-[11px] text-gray-400 dark:text-white/30 mb-4">Productos con stock que no se vendieron en este período</p>
+              {noMovement.length === 0 ? (
+                <p className="text-xs text-emerald-500 dark:text-emerald-400 text-center py-4">¡Todos los productos tuvieron ventas!</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {noMovement.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between py-2
+                      border-b border-black/[0.04] dark:border-white/[0.04] last:border-none">
+                      <div className="min-w-0 mr-2">
+                        <p className="text-[12px] text-gray-800 dark:text-white/75 truncate">{p.name}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-white/30">{p.category || 'Sin categoría'}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-[12px] font-medium text-gray-900 dark:text-white tabular-nums">{fmt(p.price)}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-white/30">{p.stock} en stock</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           </div>
         </>

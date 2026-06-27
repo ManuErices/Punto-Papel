@@ -233,16 +233,10 @@ export default function GlobalSearch({ isOpen, close, term, setTerm, results, lo
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5
           border-t border-black/[0.07] dark:border-white/[0.07]">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-white/25">
-              <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-black/[0.05] dark:bg-white/[0.07] border border-black/[0.08] dark:border-white/[0.1]">↑↓</kbd>
-              navegar
-            </span>
-            <span className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-white/25">
-              <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-black/[0.05] dark:bg-white/[0.07] border border-black/[0.08] dark:border-white/[0.1]">Enter</kbd>
-              abrir
-            </span>
-          </div>
+          <span className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-white/25">
+            <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-black/[0.05] dark:bg-white/[0.07] border border-black/[0.08] dark:border-white/[0.1]">Esc</kbd>
+            cerrar
+          </span>
           {term && totalResults > 0 && (
             <span className="text-[11px] text-gray-400 dark:text-white/25">
               {totalResults} resultado{totalResults !== 1 ? 's' : ''}

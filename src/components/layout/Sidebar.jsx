@@ -1,4 +1,6 @@
 import { NavLink } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { getLowStockProducts } from '../../firebase/products'
 
 const NAV = [
   {
@@ -11,16 +13,16 @@ const NAV = [
   {
     section: 'Gestión',
     items: [
-      { to: '/inventario',   label: 'Inventario',    icon: <IconInventory /> },
-      { to: '/compras',      label: 'Compras',        icon: <IconPurchases /> },
-      { to: '/proveedores',  label: 'Proveedores',   icon: <IconSuppliers /> },
-      { to: '/tesoreria',    label: 'Tesorería',      icon: <IconTreasury /> },
+      { to: '/inventario',   label: 'Inventario',   icon: <IconInventory /> },
+      { to: '/compras',      label: 'Compras',       icon: <IconPurchases /> },
+      { to: '/proveedores',  label: 'Proveedores',  icon: <IconSuppliers /> },
+      { to: '/tesoreria',    label: 'Tesorería',     icon: <IconTreasury /> },
     ],
   },
   {
     section: 'SII',
     items: [
-      { to: '/importar-sii', label: 'Importar SII',  icon: <IconSII /> },
+      { to: '/importar-sii', label: 'Importar SII', icon: <IconSII /> },
     ],
   },
   {
@@ -32,6 +34,12 @@ const NAV = [
 ]
 
 export default function Sidebar() {
+  const [lowStockCount, setLowStockCount] = useState(0)
+
+  useEffect(() => {
+    getLowStockProducts().then((items) => setLowStockCount(items.length)).catch(() => {})
+  }, [])
+
   return (
     <aside className="w-[200px] shrink-0 flex flex-col
       bg-white dark:bg-white/[0.02]
@@ -65,7 +73,13 @@ export default function Sidebar() {
                       {icon}
                     </span>
                   </span>
-                  {label}
+                  <span className="flex-1">{label}</span>
+                  {to === '/inventario' && lowStockCount > 0 && (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full
+                      bg-amber-500/20 text-amber-600 dark:text-amber-400 min-w-[18px] text-center">
+                      {lowStockCount}
+                    </span>
+                  )}
                 </div>
               )}
             </NavLink>

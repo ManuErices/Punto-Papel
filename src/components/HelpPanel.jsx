@@ -10,12 +10,14 @@ const HELP_CONTENT = {
         text: 'Esta es la pantalla principal. Muestra un resumen de cómo va el negocio hoy y en la semana. No necesitas hacer nada aquí, solo revisar los números.',
       },
       {
-        heading: 'Las 4 tarjetas de arriba',
+        heading: 'Las tarjetas de arriba',
         items: [
           'Ventas hoy — cuánto dinero entró hoy en total',
-          'Transacciones — cuántas ventas se hicieron',
+          'Transacciones — cuántas ventas se hicieron hoy',
           'Ticket promedio — cuánto gasta cada cliente en promedio',
-          'Caja actual — el dinero disponible en caja hoy',
+          'Efectivo — dinero en caja física (solo ventas en efectivo)',
+          'Débito — total cobrado con tarjeta débito',
+          'Transferencia — total recibido por transferencia',
         ],
       },
       {
@@ -41,6 +43,7 @@ const HELP_CONTENT = {
           '5. Si paga en efectivo, ingresa cuánto te dio para ver el vuelto',
           '6. Haz clic en el botón morado "Cobrar $..."',
           '7. Se abre el comprobante — haz clic en "Imprimir" si el cliente lo pide',
+          '8. Para ver las ventas del día, haz clic en "🕐 Ventas hoy" arriba a la derecha',
         ],
       },
       {
@@ -183,20 +186,26 @@ const HELP_CONTENT = {
     sections: [
       {
         heading: '¿Para qué sirven los reportes?',
-        text: 'Muestran cómo han ido las ventas en los últimos 7 o 30 días. Sirven para saber qué productos se venden más y cuándo hay más clientes.',
+        text: 'Muestran cómo han ido las ventas en el período elegido. Incluyen comparativa automática con el período anterior para ver si el negocio está mejorando.',
       },
       {
         heading: 'Cómo cambiar el período',
-        text: 'Arriba a la derecha hay botones: "Últimos 7 días", "Últimos 30 días" y "Este mes". Haz clic en el que quieres ver.',
+        text: 'Arriba hay botones: "Hoy", "7 días", "30 días", "Este mes" y "Personalizado". Al cambiar de período, los datos se actualizan solos. Para rango personalizado, elige las fechas y presiona "Aplicar".',
       },
       {
-        heading: 'Lo que muestran los gráficos',
+        heading: 'Lo que muestran los reportes',
         items: [
-          'Ventas por día — las barras muestran cuánto se vendió cada día',
+          'Ingresos totales — con flecha ↑↓ comparando con el período anterior',
+          'Margen bruto — cuánto ganó el negocio descontando el costo',
+          'Ventas por día — barras con el total de cada día',
           'Por categoría — qué tipo de productos se venden más',
-          'Método de pago — cuánto se cobra en efectivo vs débito',
-          'Top productos — los productos que más ingresos generan',
+          'Método de pago — cuánto se cobra en efectivo, débito o transferencia',
+          'Top productos — los que más ingresos generan, con su margen individual',
         ],
+      },
+      {
+        heading: 'Exportar datos',
+        text: 'El botón "↓ Exportar CSV" descarga todas las ventas del período en un archivo Excel. Útil para enviarle al contador.',
       },
     ],
   },
