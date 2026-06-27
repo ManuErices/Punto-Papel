@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { useAuth } from '../context/AuthContext'
 import { subscribeProducts, addProduct, updateProduct, deleteProduct } from '../firebase/products'
 import { addCashEntry } from '../firebase/cashflow'
 import { Card, Button, Badge, Input } from '../components/ui'
@@ -99,13 +98,13 @@ function ShrinkageModal({ product, newStock, onConfirm, onCancel }) {
 }
 
 export default function Inventory() {
-  const { user } = useAuth()
   const [products, setProducts]           = useState([])
   const [search, setSearch]               = useState('')
   const [form, setForm]                   = useState(EMPTY)
   const [editing, setEditing]             = useState(null)
   const [showForm, setShowForm]           = useState(false)
   const [saving, setSaving]               = useState(false)
+  const [saveError, setSaveError]         = useState(null)
   const [stockTakeMode, setStockTakeMode] = useState(false)
   const [stockTake, setStockTake]         = useState({})
   const [shrinkageItem, setShrinkageItem] = useState(null)
@@ -118,7 +117,7 @@ export default function Inventory() {
     p.barcode?.includes(search)
   )
 
-  const openNew  = () => { setForm(EMPTY); setEditing(null); setShowForm(true) }
+  const openNew  = () => { setForm(EMPTY); setEditing(null); setSaveError(null); setShowForm(true) }
   const openEdit = (p) => {
     setForm({
       name: p.name, barcode: p.barcode || '', price: String(p.price),
@@ -126,12 +125,14 @@ export default function Inventory() {
       minStock: String(p.minStock || 5), category: p.category || '',
       unit: p.unit || 'unidad',
     })
-    setEditing(p.id); setShowForm(true)
+    setEditing(p.id); setSaveError(null); setShowForm(true)
   }
 
   const handleSave = async () => {
-    if (!form.name || !form.price || !form.stock) return
+    // stock === 0 is valid; only block if the field is empty string
+    if (!form.name || !form.price || form.stock === '') return
     setSaving(true)
+    setSaveError(null)
     const data = {
       name: form.name.trim(), barcode: form.barcode.trim(),
       price: Number(form.price), cost: Number(form.cost) || 0,
@@ -142,6 +143,8 @@ export default function Inventory() {
       if (editing) await updateProduct(editing, data)
       else await addProduct(data)
       setShowForm(false); setEditing(null)
+    } catch (err) {
+      setSaveError('No se pudo guardar. Verifica tu conexión a internet e intenta de nuevo.')
     } finally { setSaving(false) }
   }
 
@@ -172,7 +175,7 @@ export default function Inventory() {
     const { product, newStock } = shrinkageItem
     await updateProduct(product.id, { stock: newStock })
     await addCashEntry({
-      type: 'out', amount: 0, userId: user?.uid || 'system',
+      type: 'out', amount: 0, userId: 'system',
       concept: `Ajuste stock: ${product.name} (-${product.stock - newStock} ${product.unit || 'uds.'}) · ${reason}${notes ? ` · ${notes}` : ''}`,
     })
     setShrinkageItem(null)
@@ -409,7 +412,10 @@ export default function Inventory() {
                 </select>
               </div>
             </div>
-            <div className="flex gap-2 mt-6">
+            {saveError && (
+              <p className="text-[11px] text-red-500 mt-4">{saveError}</p>
+            )}
+            <div className="flex gap-2 mt-3">
               <Button onClick={() => setShowForm(false)} variant="secondary" className="flex-1">
                 Cancelar
               </Button>
