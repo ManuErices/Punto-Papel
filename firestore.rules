@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuth() && request.auth.token.role == 'admin';
+    }
+
+    function isOperador() {
+      return isAuth() && (
+        request.auth.token.role == 'operador' ||
+        request.auth.token.role == 'admin'
+      );
+    }
+
+    // Productos — todos los autenticados pueden leer, solo admin escribe
+    match /products/{id} {
+      allow read:   if isOperador();
+      allow write:  if isAdmin();
+      // El POS necesita decrementar stock (update), permitir a operador solo update
+      allow update: if isOperador();
+    }
+
+    // Ventas — operador puede crear y leer, admin puede todo
+    match /sales/{id} {
+      allow read:   if isOperador();
+      allow create: if isOperador();
+      allow update, delete: if isAdmin();
+    }
+
+    // Compras — solo admin gestiona
+    match /purchases/{id} {
+      allow read:   if isOperador();
+      allow write:  if isAdmin();
+    }
+
+    // Flujo de caja — operador puede crear (registrar caja), admin puede todo
+    match /cashflow/{id} {
+      allow read:   if isOperador();
+      allow create: if isOperador();
+      allow update, delete: if isAdmin();
+    }
+
+    // Configuración del negocio — solo admin
+    match /config/{id} {
+      allow read:  if isOperador();
+      allow write: if isAdmin();
+    }
+  }
+}

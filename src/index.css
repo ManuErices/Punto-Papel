@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans antialiased;
+  }
+}
+
+@layer utilities {
+  .gradient-brand {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  }
+  .gradient-metric-1 {
+    background: linear-gradient(135deg, #1e1b4b, #312e81);
+  }
+  .gradient-metric-2 {
+    background: linear-gradient(135deg, #064e3b, #065f46);
+  }
+  .gradient-metric-3 {
+    background: linear-gradient(135deg, #1c1917, #292524);
+  }
+  .gradient-metric-4 {
+    background: linear-gradient(135deg, #4c1d95, #5b21b6);
+  }
+  .gradient-metric-1-light {
+    background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+  }
+  .gradient-metric-2-light {
+    background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+  }
+  .gradient-metric-3-light {
+    background: linear-gradient(135deg, #f9fafb, #f3f4f6);
+  }
+  .gradient-metric-4-light {
+    background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+  }
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+  }
+}
