@@ -27,15 +27,14 @@ export default function Topbar() {
         backdrop-blur-sm shrink-0 gap-4">
 
         {/* Logo */}
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center
-            text-white text-xs font-semibold shrink-0"
-            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
-            P&
-          </div>
-          <span className="text-[15px] font-semibold tracking-tight text-gray-900 dark:text-white hidden sm:block">
-            Punto<span className="text-gray-400 dark:text-white/30"> & </span>Papel
-          </span>
+        <div className="flex items-center shrink-0">
+          <img
+            src="/logo.png"
+            alt="Punto & Papel"
+            className="h-10 w-auto max-w-[160px] object-contain
+              dark:brightness-0 dark:invert
+              transition-all duration-200"
+          />
         </div>
 
         {/* Search trigger */}
