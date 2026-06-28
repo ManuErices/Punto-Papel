@@ -78,19 +78,22 @@ export function CardHeader({ title, badge }) {
 }
 
 // Input
-export function Input({ label, ...props }) {
+export function Input({ label, error, ...props }) {
   return (
     <div className="flex flex-col gap-1">
       {label && <label className="text-[11px] text-gray-500 dark:text-white/40 uppercase tracking-wide">{label}</label>}
       <input
         {...props}
-        className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
-          border border-black/[0.08] dark:border-white/[0.08]
+        className={`h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
           text-gray-900 dark:text-white
           placeholder:text-gray-400 dark:placeholder:text-white/25
-          focus:outline-none focus:ring-2 focus:ring-brand-500/30
-          transition-all"
+          focus:outline-none focus:ring-2 transition-all
+          ${error
+            ? 'border border-red-400 dark:border-red-500/70 focus:ring-red-400/30'
+            : 'border border-black/[0.08] dark:border-white/[0.08] focus:ring-brand-500/30'
+          }`}
       />
+      {error && <p className="text-[11px] text-red-500 dark:text-red-400 mt-0.5">{error}</p>}
     </div>
   )
 }

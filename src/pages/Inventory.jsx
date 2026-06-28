@@ -105,6 +105,7 @@ export default function Inventory() {
   const [showForm, setShowForm]           = useState(false)
   const [saving, setSaving]               = useState(false)
   const [saveError, setSaveError]         = useState(null)
+  const [fieldErrors, setFieldErrors]     = useState({})
   const [stockTakeMode, setStockTakeMode] = useState(false)
   const [stockTake, setStockTake]         = useState({})
   const [shrinkageItem, setShrinkageItem] = useState(null)
@@ -117,7 +118,7 @@ export default function Inventory() {
     p.barcode?.includes(search)
   )
 
-  const openNew  = () => { setForm(EMPTY); setEditing(null); setSaveError(null); setShowForm(true) }
+  const openNew  = () => { setForm(EMPTY); setEditing(null); setSaveError(null); setFieldErrors({}); setShowForm(true) }
   const openEdit = (p) => {
     setForm({
       name: p.name, barcode: p.barcode || '', price: String(p.price),
@@ -125,12 +126,15 @@ export default function Inventory() {
       minStock: String(p.minStock || 5), category: p.category || '',
       unit: p.unit || 'unidad',
     })
-    setEditing(p.id); setSaveError(null); setShowForm(true)
+    setEditing(p.id); setSaveError(null); setFieldErrors({}); setShowForm(true)
   }
 
   const handleSave = async () => {
-    // stock === 0 is valid; only block if the field is empty string
-    if (!form.name || !form.price || form.stock === '') return
+    const errors = {}
+    if (!form.name.trim()) errors.name = 'El nombre es obligatorio'
+    if (!form.price) errors.price = 'El precio de venta es obligatorio'
+    if (Object.keys(errors).length > 0) { setFieldErrors(errors); return }
+    setFieldErrors({})
     setSaving(true)
     setSaveError(null)
     const data = {
@@ -358,8 +362,9 @@ export default function Inventory() {
             </h2>
             <div className="flex flex-col gap-3">
               <Input label="Nombre *" value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Ej: Cuaderno universitario Torre" />
+                onChange={(e) => { setForm({ ...form, name: e.target.value }); setFieldErrors((p) => ({ ...p, name: '' })) }}
+                placeholder="Ej: Cuaderno universitario Torre"
+                error={fieldErrors.name} />
               <Input label="Código de barras" value={form.barcode}
                 onChange={(e) => setForm({ ...form, barcode: e.target.value })}
                 placeholder="Escanear o escribir" />
@@ -387,12 +392,13 @@ export default function Inventory() {
 
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Precio venta *" type="number" value={form.price}
-                  onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0" />
+                  onChange={(e) => { setForm({ ...form, price: e.target.value }); setFieldErrors((p) => ({ ...p, price: '' })) }}
+                  placeholder="0" error={fieldErrors.price} />
                 <Input label="Costo" type="number" value={form.cost}
                   onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0" />
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Input label={`Stock actual (${UNITS.find(u => u.key === form.unit)?.label || 'unidades'}) *`}
+                <Input label={`Stock actual (${UNITS.find(u => u.key === form.unit)?.label || 'unidades'})`}
                   type="number" value={form.stock}
                   onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" />
                 <Input label="Stock mínimo" type="number" value={form.minStock}
