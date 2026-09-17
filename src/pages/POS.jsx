@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { getProductByBarcode, getProducts } from '../firebase/products'
 import { createSale, getSalesToday } from '../firebase/sales'
+import { getAnilladoConfig, saveAnilladoConfig } from '../firebase/serviceConfig'
 import { useAuth } from '../context/AuthContext'
 import { Card, Button, Badge } from '../components/ui'
 import Receipt from '../components/Receipt'
@@ -94,6 +95,269 @@ function QuickServiceModal({ service, prices, onAdd, onClose }) {
               Agregar
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Modal de desglose para Anillado: pide hojas + tipo de anillo + tipo de mica,
+// calcula el costo real y sugiere el precio de venta aplicando el margen configurado.
+function AnilladoModal({ config, onAdd, onClose, onOpenConfig }) {
+  const [booklets, setBooklets] = useState('1')
+  const [pages, setPages] = useState('')
+  const [pageSizeId, setPageSizeId] = useState(config.pageCosts[0]?.id || '')
+  const [ringId, setRingId] = useState(config.ringTypes[0]?.id || '')
+  const [micaId, setMicaId] = useState(config.micaTypes[0]?.id || '')
+
+  const pageSize = config.pageCosts.find((p) => p.id === pageSizeId)
+  const ring = config.ringTypes.find((r) => r.id === ringId)
+  const mica = config.micaTypes.find((m) => m.id === micaId)
+
+  const qtyBooklets = Number(booklets) || 0
+  const ringsNeeded  = qtyBooklets * 1 // 1 anillo por cuadernillo
+  const micasNeeded  = qtyBooklets * 2 // 2 micas por cuadernillo (portada + contraportada)
+
+  const pageCost  = (Number(pages) || 0) * qtyBooklets * (pageSize?.cost || 0)
+  const ringCost  = (ring?.cost || 0) * ringsNeeded
+  const micaCost  = (mica?.cost || 0) * micasNeeded
+  const cost      = pageCost + ringCost + micaCost
+  const salePrice = Math.round(cost * config.margin)
+  const canAdd    = qtyBooklets > 0 && Number(pages) > 0 && pageSize && ring
+
+  const handleAdd = () => {
+    if (!canAdd) return
+    const parts = [`${pages} hojas ${pageSize.name}`, ring.name]
+    if (mica && mica.cost > 0) parts.push(mica.name)
+    const label = qtyBooklets > 1
+      ? `Anillado x${qtyBooklets} (${parts.join(', ')})`
+      : `Anillado (${parts.join(', ')})`
+    onAdd({ name: label, cost, price: salePrice })
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
+        border border-black/[0.08] dark:border-white/[0.1] p-6">
+        <div className="flex items-start justify-between mb-5">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📎</span>
+            <div>
+              <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">Anillado</h3>
+              <p className="text-[12px] text-gray-400 dark:text-white/30">Desglose de costos</p>
+            </div>
+          </div>
+          <button onClick={onOpenConfig}
+            className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 shrink-0">
+            ⚙ Configurar
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">
+              Cuadernillos <span className="normal-case text-gray-400 dark:text-white/25">(copias a anillar)</span>
+            </label>
+            <input type="number" min="1" value={booklets} onChange={(e) => setBooklets(e.target.value)}
+              autoFocus placeholder="Ej: 1"
+              className="h-10 rounded-xl px-3 text-[15px] font-medium text-center
+                bg-black/[0.04] dark:bg-white/[0.05]
+                border border-black/[0.08] dark:border-white/[0.08]
+                text-gray-900 dark:text-white
+                focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">
+                Hojas <span className="normal-case text-gray-400 dark:text-white/25">c/u</span>
+              </label>
+              <input type="number" min="1" value={pages} onChange={(e) => setPages(e.target.value)}
+                placeholder="Ej: 50"
+                className="h-10 rounded-xl px-3 text-[15px] font-medium text-center
+                  bg-black/[0.04] dark:bg-white/[0.05]
+                  border border-black/[0.08] dark:border-white/[0.08]
+                  text-gray-900 dark:text-white
+                  focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Tamaño</label>
+              <select value={pageSizeId} onChange={(e) => setPageSizeId(e.target.value)}
+                className="h-10 rounded-xl px-2 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
+                  border border-black/[0.08] dark:border-white/[0.08]
+                  text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
+                {config.pageCosts.length === 0 && <option value="">Sin tamaños</option>}
+                {config.pageCosts.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name} ({fmt(p.cost)})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Tipo de anillo</label>
+            <select value={ringId} onChange={(e) => setRingId(e.target.value)}
+              className="h-10 rounded-xl px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
+                border border-black/[0.08] dark:border-white/[0.08]
+                text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
+              {config.ringTypes.length === 0 && <option value="">Sin tipos configurados</option>}
+              {config.ringTypes.map((r) => (
+                <option key={r.id} value={r.id}>{r.name} — {fmt(r.cost)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Mica</label>
+            <select value={micaId} onChange={(e) => setMicaId(e.target.value)}
+              className="h-10 rounded-xl px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
+                border border-black/[0.08] dark:border-white/[0.08]
+                text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
+              {config.micaTypes.length === 0 && <option value="">Sin tipos configurados</option>}
+              {config.micaTypes.map((m) => (
+                <option key={m.id} value={m.id}>{m.name} — {fmt(m.cost)}</option>
+              ))}
+            </select>
+          </div>
+
+          {cost > 0 && (
+            <div className="flex flex-col gap-1 px-3 py-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.04]">
+              <div className="flex justify-between text-[11px] text-gray-500 dark:text-white/40">
+                <span>{ringsNeeded} anillo{ringsNeeded !== 1 ? 's' : ''} · {micasNeeded} mica{micasNeeded !== 1 ? 's' : ''}</span>
+                <span className="tabular-nums">{fmt(ringCost + micaCost)}</span>
+              </div>
+              <div className="flex justify-between text-[11px] text-gray-500 dark:text-white/40">
+                <span>Costo total</span>
+                <span className="tabular-nums">{fmt(cost)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-1 mt-1 border-t border-black/[0.06] dark:border-white/[0.06]">
+                <span className="text-[12px] text-indigo-600 dark:text-indigo-400">
+                  Precio de venta ({Math.round(config.margin * 100)}%)
+                </span>
+                <span className="text-[18px] font-semibold text-indigo-600 dark:text-indigo-400 tabular-nums">
+                  {fmt(salePrice)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-1">
+            <button onClick={onClose}
+              className="flex-1 h-9 rounded-xl text-[12px] font-medium
+                bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50
+                border border-black/[0.08] dark:border-white/[0.08]">
+              Cancelar
+            </button>
+            <button onClick={handleAdd} disabled={!canAdd}
+              className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-40"
+              style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+              Agregar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Modal de configuración: define el costo por hoja, el margen, y los tipos
+// de anillo/mica disponibles (con su costo cada uno). Se guarda en Firestore
+// para que quede disponible en cualquier dispositivo.
+function AnilladoConfigModal({ config, onSave, onClose }) {
+  const [local, setLocal]   = useState(config)
+  const [saving, setSaving] = useState(false)
+
+  const updateList = (key, id, field, value) =>
+    setLocal((prev) => ({
+      ...prev,
+      [key]: prev[key].map((item) =>
+        item.id === id ? { ...item, [field]: field === 'cost' ? (Number(value) || 0) : value } : item
+      ),
+    }))
+
+  const addItem = (key, prefix) =>
+    setLocal((prev) => ({
+      ...prev,
+      [key]: [...prev[key], { id: `${prefix}-${Date.now()}`, name: '', cost: 0 }],
+    }))
+
+  const removeItem = (key, id) =>
+    setLocal((prev) => ({ ...prev, [key]: prev[key].filter((i) => i.id !== id) }))
+
+  const handleSave = async () => {
+    setSaving(true)
+    try { await onSave(local) } finally { setSaving(false) }
+  }
+
+  const inputCls = 'h-8 rounded-lg px-2 text-[12px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25 focus:outline-none focus:ring-1 focus:ring-indigo-500/30'
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center p-4 overflow-y-auto"
+      style={{ background: 'rgba(0,0,0,0.75)' }}>
+      <div className="w-full max-w-lg bg-white dark:bg-[#141420] rounded-2xl
+        border border-black/[0.08] dark:border-white/[0.1] p-6 my-4">
+        <h3 className="text-[15px] font-semibold text-gray-900 dark:text-white mb-1">Configurar Anillado</h3>
+        <p className="text-[12px] text-gray-400 dark:text-white/30 mb-5">
+          Costos usados para calcular el precio de venta automáticamente
+        </p>
+
+        <div className="flex flex-col gap-1 mb-5 max-w-[200px]">
+          <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Margen (%)</label>
+          <input type="number" min="0" value={Math.round(local.margin * 100)}
+            onChange={(e) => setLocal({ ...local, margin: (Number(e.target.value) || 0) / 100 })}
+            className={`${inputCls} h-9`} />
+        </div>
+
+        {[
+          ['pageCosts', 'Costo por hoja (según tamaño)', 'page'],
+          ['ringTypes', 'Tipos de anillo', 'ring'],
+          ['micaTypes', 'Tipos de mica', 'mica'],
+        ].map(([key, label, prefix]) => (
+          <div key={key} className="mb-5">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">{label}</p>
+              <button onClick={() => addItem(key, prefix)}
+                className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600">
+                + Agregar
+              </button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {local[key].map((item) => (
+                <div key={item.id} className="flex items-center gap-2">
+                  <input type="text" value={item.name} placeholder="Nombre"
+                    onChange={(e) => updateList(key, item.id, 'name', e.target.value)}
+                    className={`flex-1 ${inputCls}`} />
+                  <input type="number" value={item.cost} placeholder="Costo"
+                    onChange={(e) => updateList(key, item.id, 'cost', e.target.value)}
+                    className={`w-24 ${inputCls}`} />
+                  <button onClick={() => removeItem(key, item.id)}
+                    className="w-7 h-7 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 flex items-center justify-center text-sm shrink-0">
+                    ×
+                  </button>
+                </div>
+              ))}
+              {local[key].length === 0 && (
+                <p className="text-[11px] text-gray-400 dark:text-white/25">Sin tipos configurados</p>
+              )}
+            </div>
+          </div>
+        ))}
+
+        <div className="flex gap-2 mt-2">
+          <button onClick={onClose}
+            className="flex-1 h-9 rounded-xl text-[12px] font-medium
+              bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50
+              border border-black/[0.08] dark:border-white/[0.08]">
+            Cancelar
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+            {saving ? 'Guardando...' : 'Guardar'}
+          </button>
         </div>
       </div>
     </div>
@@ -201,6 +465,9 @@ export default function POS() {
   const [todaySales, setTodaySales]       = useState([])
   const [showHistory, setShowHistory]     = useState(false)
   const [quickService, setQuickService]   = useState(null) // servicio rápido seleccionado
+  const [showAnillado, setShowAnillado]           = useState(false)
+  const [showAnilladoConfig, setShowAnilladoConfig] = useState(false)
+  const [anilladoConfig, setAnilladoConfig]       = useState(null)
   const [showQuote, setShowQuote]         = useState(false)
   const [lastSale, setLastSale]           = useState(null)
   // Precios de servicios rápidos — guardados en localStorage para personalizar
@@ -227,6 +494,7 @@ export default function POS() {
       setFavorites(sorted)
     }
     loadAll()
+    getAnilladoConfig().then(setAnilladoConfig)
     barcodeRef.current?.focus()
   }, [])
 
@@ -313,6 +581,31 @@ export default function POS() {
         isService: true,
       }]
     })
+  }
+
+  // Agregar Anillado al carrito como línea propia (cada anillado puede tener
+  // hojas/anillo/mica distintos, así que no se fusiona con otra línea igual
+  // como sí pasa con los demás servicios rápidos)
+  const addAnilladoToCart = ({ name, cost, price }) => {
+    setCart((prev) => [...prev, {
+      productId: `quick-anillado-${Date.now()}`,
+      name,
+      price,
+      cost, // costo real calculado — queda guardado en el snapshot de la venta
+      category: 'Servicios',
+      stock:    9999,
+      minStock: 0,
+      qty:      1,
+      discount: 0,
+      subtotal: price,
+      isService: true,
+    }])
+  }
+
+  const handleSaveAnilladoConfig = async (cfg) => {
+    await saveAnilladoConfig(cfg)
+    setAnilladoConfig(cfg)
+    setShowAnilladoConfig(false)
   }
 
   const handleBarcode = async (e) => {
@@ -448,16 +741,20 @@ export default function POS() {
         </div>
         <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
           {QUICK_SERVICES.map((svc) => {
+            const isAnillado = svc.id === 'anillado'
             const price = servicePrices[svc.priceKey] || svc.defaultPrice
             return (
-              <button key={svc.id} onClick={() => setQuickService(svc)}
+              <button key={svc.id}
+                onClick={() => isAnillado ? setShowAnillado(true) : setQuickService(svc)}
                 className="flex flex-col items-center gap-1 p-3 rounded-xl transition-all text-center
                   bg-black/[0.02] dark:bg-white/[0.03]
                   hover:bg-indigo-500/10 hover:border-indigo-500/30
                   border border-black/[0.05] dark:border-white/[0.05]">
                 <span className="text-xl">{svc.icon}</span>
                 <span className="text-[11px] font-medium text-gray-700 dark:text-white/70 leading-tight">{svc.name}</span>
-                <span className="text-[10px] text-gray-400 dark:text-white/30 tabular-nums">{fmt(price)}/u</span>
+                <span className="text-[10px] text-gray-400 dark:text-white/30 tabular-nums">
+                  {isAnillado ? 'Según desglose' : `${fmt(price)}/u`}
+                </span>
               </button>
             )
           })}
@@ -793,6 +1090,25 @@ export default function POS() {
           prices={servicePrices}
           onAdd={addQuickService}
           onClose={() => setQuickService(null)}
+        />
+      )}
+
+      {/* Modal Anillado (desglose de costos) */}
+      {showAnillado && anilladoConfig && (
+        <AnilladoModal
+          config={anilladoConfig}
+          onAdd={addAnilladoToCart}
+          onClose={() => setShowAnillado(false)}
+          onOpenConfig={() => { setShowAnillado(false); setShowAnilladoConfig(true) }}
+        />
+      )}
+
+      {/* Modal configuración de costos de Anillado */}
+      {showAnilladoConfig && anilladoConfig && (
+        <AnilladoConfigModal
+          config={anilladoConfig}
+          onSave={handleSaveAnilladoConfig}
+          onClose={() => setShowAnilladoConfig(false)}
         />
       )}
 

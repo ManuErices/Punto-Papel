@@ -31,26 +31,16 @@ export const receivePurchase = async (purchaseId, items) => {
         if (!snap.exists()) continue
         const currentStock = snap.data().stock || 0
 
-        // Si el producto se compra por paquete/caja pero se vende por unidad
-        // (packSize > 1), el stock se suma en unidades reales y el costo se
-        // guarda POR UNIDAD (no por paquete). packSize = 1 = sin conversión.
-        const packSize     = item.packSize > 0 ? item.packSize : 1
-        const unitsToAdd   = item.qty * packSize
-        const costPerUnit  = packSize > 1 ? Math.round(item.unitCost / packSize) : item.unitCost
-        const netoPerUnit  = packSize > 1 ? Math.round((item.costNeto || 0) / packSize) : item.costNeto
-
-        const updateData = { stock: currentStock + unitsToAdd }
-
-        if (packSize > 1) updateData.unitsPerPackage = packSize
+        const updateData = { stock: currentStock + item.qty }
 
         // Actualizar costo (con IVA) y costo neto si cambiaron respecto al registrado
         // Esto mantiene el margen correcto en el inventario
-        if (costPerUnit > 0 && costPerUnit !== snap.data().cost) {
-          updateData.cost          = costPerUnit
+        if (item.unitCost > 0 && item.unitCost !== snap.data().cost) {
+          updateData.cost          = item.unitCost
           updateData.costUpdatedAt = serverTimestamp()
         }
-        if (netoPerUnit > 0 && netoPerUnit !== snap.data().costNeto) {
-          updateData.costNeto = netoPerUnit
+        if (item.costNeto > 0 && item.costNeto !== snap.data().costNeto) {
+          updateData.costNeto = item.costNeto
         }
 
         // Actualizar precio de venta si se indicó uno nuevo
@@ -65,18 +55,12 @@ export const receivePurchase = async (purchaseId, items) => {
 
   // Crear productos nuevos en inventario
   for (const item of newItems) {
-    const packSize    = item.packSize > 0 ? item.packSize : 1
-    const unitsToAdd  = item.qty * packSize
-    const costPerUnit = packSize > 1 ? Math.round(item.unitCost / packSize) : item.unitCost
-    const netoPerUnit = packSize > 1 ? Math.round((item.costNeto || 0) / packSize) : item.costNeto
-
     await addDoc(collection(db, 'products'), {
       name:      item.name,
       price:     item.salePrice || 0,
-      cost:      costPerUnit    || 0,
-      costNeto:  netoPerUnit    || 0,
-      stock:     unitsToAdd,
-      unitsPerPackage: packSize,
+      cost:      item.unitCost  || 0,
+      costNeto:  item.costNeto  || 0,
+      stock:     item.qty,
       minStock:  item.minStock  || 5,
       category:  item.category  || 'Otros',
       barcode:   item.barcode   || '',

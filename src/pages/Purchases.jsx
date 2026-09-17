@@ -1,17 +1,13 @@
 import { useState, useEffect } from 'react'
-import { createPurchase, getPurchases, receivePurchase, cancelPurchase } from '../firebase/purchases'
-import { getSuppliers } from '../firebase/suppliers'
+import { createPurchase, getPurchases, receivePurchase, SUPPLIERS } from '../firebase/purchases'
 import { getProducts } from '../firebase/products'
 import { useAuth } from '../context/AuthContext'
 import { Card, Button, Badge } from '../components/ui'
+import { emptyItem, ItemRow, prorateShipping } from './PurchaseItemRow'
+import ImportPedidoModal from './ImportPedidoModal'
 
 const fmt = (n) =>
   new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
-
-const CATEGORIES = [
-  'Fotocopias', 'Impresión', 'Cuadernos', 'Lápices y escritura',
-  'Archivadores', 'Papelería', 'Artículos de oficina', 'Servicios', 'Otros',
-]
 
 const STATUS = {
   pendiente: { label: 'Pendiente', variant: 'low' },
@@ -21,160 +17,24 @@ const STATUS = {
 
 const EMPTY_FORM = { supplier: '', notes: '' }
 
-// Un ítem vacío para el formulario
-const emptyItem = () => ({
-  _key:       Math.random().toString(36).slice(2), // key local para React
-  mode:       'existing', // 'existing' | 'new'
-  productId:  '',
-  name:       '',
-  qty:        1,
-  unitCost:   0,
-  salePrice:  0,
-  category:   '',
-  barcode:    '',
-  minStock:   5,
-  subtotal:   0,
-})
-
-function ItemRow({ item, products, onChange, onRemove }) {
-  const update = (field, value) => {
-    const updated = { ...item, [field]: value }
-
-    // Si cambia el producto existente, rellena los datos
-    if (field === 'productId') {
-      const prod = products.find((p) => p.id === value)
-      if (prod) {
-        updated.name      = prod.name
-        updated.unitCost  = prod.cost || 0
-        updated.salePrice = prod.price || 0
-        updated.category  = prod.category || ''
-      } else {
-        updated.name = ''
-      }
-    }
-
-    // Recalcular subtotal
-    updated.subtotal = Number(updated.qty || 0) * Number(updated.unitCost || 0)
-    onChange(updated)
-  }
-
-  const inputCls = 'h-8 rounded-lg px-2 text-[12px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 w-full'
-
-  return (
-    <div className="flex flex-col gap-2 p-3 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.05] dark:border-white/[0.05]">
-
-      {/* Toggle modo */}
-      <div className="flex items-center gap-2">
-        <div className="flex gap-1 p-0.5 rounded-lg bg-black/[0.04] dark:bg-white/[0.06]">
-          {[
-            { key: 'existing', label: 'Producto existente' },
-            { key: 'new',      label: 'Producto nuevo' },
-          ].map((m) => (
-            <button key={m.key} onClick={() => update('mode', m.key)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-                item.mode === m.key
-                  ? 'text-white'
-                  : 'text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60'
-              }`}
-              style={item.mode === m.key ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <button onClick={onRemove}
-          className="ml-auto w-6 h-6 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 flex items-center justify-center text-sm transition-colors">
-          ×
-        </button>
-      </div>
-
-      {/* Selección de producto existente */}
-      {item.mode === 'existing' && (
-        <select value={item.productId} onChange={(e) => update('productId', e.target.value)} className={inputCls}>
-          <option value="">Seleccionar producto del inventario...</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} — Stock actual: {p.stock}
-            </option>
-          ))}
-        </select>
-      )}
-
-      {/* Campos para producto nuevo */}
-      {item.mode === 'new' && (
-        <div className="grid grid-cols-2 gap-2">
-          <input type="text" placeholder="Nombre del producto *" value={item.name}
-            onChange={(e) => update('name', e.target.value)} className={inputCls} />
-          <input type="text" placeholder="Código de barras (opcional)" value={item.barcode}
-            onChange={(e) => update('barcode', e.target.value)} className={inputCls} />
-          <select value={item.category} onChange={(e) => update('category', e.target.value)} className={inputCls}>
-            <option value="">Categoría...</option>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <input type="number" placeholder="Stock mínimo" value={item.minStock}
-            onChange={(e) => update('minStock', Number(e.target.value))} className={inputCls} />
-        </div>
-      )}
-
-      {/* Campos comunes: cantidad, costo y precio de venta */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="flex flex-col gap-0.5">
-          <label className="text-[10px] text-gray-400 dark:text-white/30 uppercase tracking-wide">Cantidad *</label>
-          <input type="number" min="1" value={item.qty}
-            onChange={(e) => update('qty', Number(e.target.value))} className={inputCls} />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <label className="text-[10px] text-gray-400 dark:text-white/30 uppercase tracking-wide">Costo unit.</label>
-          <input type="number" min="0" value={item.unitCost}
-            onChange={(e) => update('unitCost', Number(e.target.value))} placeholder="0" className={inputCls} />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <label className="text-[10px] text-gray-400 dark:text-white/30 uppercase tracking-wide">
-            {item.mode === 'new' ? 'Precio venta *' : 'Precio venta'}
-          </label>
-          <input type="number" min="0" value={item.salePrice}
-            onChange={(e) => update('salePrice', Number(e.target.value))} placeholder="0" className={inputCls} />
-        </div>
-      </div>
-
-      {/* Subtotal */}
-      {item.subtotal > 0 && (
-        <div className="flex justify-between items-center text-[11px]">
-          <span className="text-gray-400 dark:text-white/30">Subtotal compra</span>
-          <span className="font-medium text-gray-700 dark:text-white/60 tabular-nums">{fmt(item.subtotal)}</span>
-        </div>
-      )}
-
-      {/* Advertencia si producto nuevo sin precio de venta */}
-      {item.mode === 'new' && item.name && !item.salePrice && (
-        <p className="text-[11px] text-amber-500 dark:text-amber-400 bg-amber-500/10 rounded-lg px-2 py-1.5">
-          ⚠ Ingresa el precio de venta para que el producto quede listo en el POS
-        </p>
-      )}
-      
-    </div>
-  )
-}
-
 export default function Purchases() {
   const { user }                          = useAuth()
   const [purchases, setPurchases]         = useState([])
-  const [suppliers, setSuppliers]         = useState([])
   const [products, setProducts]           = useState([])
   const [loading, setLoading]             = useState(true)
   const [showForm, setShowForm]           = useState(false)
+  const [showImport, setShowImport]       = useState(false)
   const [showReceive, setShowReceive]     = useState(null)
   const [form, setForm]                   = useState(EMPTY_FORM)
   const [items, setItems]                 = useState([emptyItem()])
+  const [shippingCost, setShippingCost]   = useState('')
   const [saving, setSaving]               = useState(false)
   const [receiveItems, setReceiveItems]   = useState([])
-  const [filterStatus, setFilterStatus]   = useState('all')
-  const [cancelConfirm, setCancelConfirm] = useState(null)
 
   const load = async () => {
-    const [p, prods, sups] = await Promise.all([getPurchases(), getProducts(), getSuppliers()])
+    const [p, prods] = await Promise.all([getPurchases(), getProducts()])
     setPurchases(p)
     setProducts(prods)
-    setSuppliers(sups)
     setLoading(false)
   }
 
@@ -184,7 +44,12 @@ export default function Purchases() {
     setItems((prev) => prev.map((i) => i._key === key ? updated : i))
 
   const removeItem = (key) =>
-    setItems((prev) => prev.filter((i) => i._key !== key))
+    setItems((prev) => prorateShipping(prev.filter((i) => i._key !== key), shippingCost))
+
+  const handleShippingChange = (value) => {
+    setShippingCost(value)
+    setItems((prev) => prorateShipping(prev, value))
+  }
 
   const totalOrder = items.reduce((a, i) => a + (i.subtotal || 0), 0)
 
@@ -199,11 +64,14 @@ export default function Purchases() {
       await createPurchase({
         supplier: form.supplier,
         notes:    form.notes,
+        shippingCost: Number(shippingCost) || 0,
         items:    items.map((i) => ({
           productId: i.productId || null,
           name:      i.name,
           qty:       Number(i.qty),
+          packSize:  Number(i.packSize) || 1,
           unitCost:  Number(i.unitCost),
+          costNeto:  Number(i.costNeto) || 0,
           salePrice: Number(i.salePrice),
           category:  i.category,
           barcode:   i.barcode,
@@ -217,6 +85,7 @@ export default function Purchases() {
       setShowForm(false)
       setForm(EMPTY_FORM)
       setItems([emptyItem()])
+      setShippingCost('')
       await load()
     } finally {
       setSaving(false)
@@ -226,25 +95,19 @@ export default function Purchases() {
   const openReceive = (purchase) => {
     setReceiveItems(
       purchase.items.map((item) => {
-        const prod = products.find((p) => p.id === item.productId)
+        const prod       = products.find((p) => p.id === item.productId)
+        const packSize   = item.packSize > 0 ? item.packSize : 1
+        const unitsToAdd = item.qty * packSize
         return {
           ...item,
+          packSize,
+          unitsToAdd,
           currentStock: prod?.stock ?? (item.isNew ? 0 : null),
-          newStock:     (prod?.stock ?? 0) + item.qty,
+          newStock:     (prod?.stock ?? 0) + unitsToAdd,
         }
       })
     )
     setShowReceive(purchase)
-  }
-
-  const handleCancel = async () => {
-    if (!cancelConfirm) return
-    setSaving(true)
-    try {
-      await cancelPurchase(cancelConfirm.id)
-      setCancelConfirm(null)
-      await load()
-    } finally { setSaving(false) }
   }
 
   const handleReceive = async () => {
@@ -258,10 +121,6 @@ export default function Purchases() {
     }
   }
 
-  const filteredPurchases = filterStatus === 'all'
-    ? purchases
-    : purchases.filter((p) => p.status === filterStatus)
-
   const totalCompras = purchases.reduce((a, p) => a + (p.total || 0), 0)
   const pendientes   = purchases.filter((p) => p.status === 'pendiente').length
   const recibidas    = purchases.filter((p) => p.status === 'recibido').length
@@ -274,7 +133,10 @@ export default function Purchases() {
           <h1 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white">Compras</h1>
           <p className="text-xs text-gray-400 dark:text-white/30 mt-0.5">{purchases.length} órdenes registradas</p>
         </div>
-        <Button onClick={() => { setShowForm(true); setItems([emptyItem()]) }}>+ Nueva orden</Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowImport(true)} variant="secondary">Importar PDF</Button>
+          <Button onClick={() => { setShowForm(true); setItems([emptyItem()]); setShippingCost('') }}>+ Nueva orden</Button>
+        </div>
       </div>
 
       {/* Metrics */}
@@ -288,17 +150,6 @@ export default function Purchases() {
             <p className="text-[10px] uppercase tracking-widest text-white/50 mb-2">{m.label}</p>
             <p className="text-[22px] font-semibold text-white tracking-tight tabular-nums">{m.value}</p>
           </div>
-        ))}
-      </div>
-
-      {/* Filtros */}
-      <div className="flex items-center gap-1 p-0.5 rounded-xl bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.07] dark:border-white/[0.07] self-start">
-        {[['all','Todas'],['pendiente','Pendientes'],['recibido','Recibidas']].map(([key,label]) => (
-          <button key={key} onClick={() => setFilterStatus(key)}
-            className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${filterStatus === key ? 'text-white' : 'text-gray-500 dark:text-white/40 hover:text-gray-700'}`}
-            style={filterStatus === key ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
-            {label}
-          </button>
         ))}
       </div>
 
@@ -319,10 +170,10 @@ export default function Purchases() {
                 </tr>
               </thead>
               <tbody>
-                {filteredPurchases.length === 0 && (
+                {purchases.length === 0 && (
                   <tr><td colSpan={7} className="text-center text-sm text-gray-400 dark:text-white/25 py-12">Sin órdenes. Crea la primera.</td></tr>
                 )}
-                {filteredPurchases.map((p) => {
+                {purchases.map((p) => {
                   const newItems = p.items?.filter((i) => i.isNew)?.length || 0
                   return (
                     <tr key={p.id} className="border-b border-black/[0.04] dark:border-white/[0.04] hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors">
@@ -346,16 +197,10 @@ export default function Purchases() {
                       </td>
                       <td className="px-4 py-3">
                         {p.status === 'pendiente' && (
-                          <div className="flex items-center gap-3">
-                            <button onClick={() => openReceive(p)}
-                              className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
-                              Marcar recibido
-                            </button>
-                            <button onClick={() => setCancelConfirm({ id: p.id, supplier: p.supplier })}
-                              className="text-[11px] text-red-400 hover:text-red-500 transition-colors">
-                              Cancelar
-                            </button>
-                          </div>
+                          <button onClick={() => openReceive(p)}
+                            className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
+                            Marcar recibido
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -374,19 +219,27 @@ export default function Purchases() {
 
             <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-5">Nueva orden de compra</h2>
 
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Proveedor *</label>
                 <select value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })}
                   className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
                   <option value="">Seleccionar proveedor</option>
-                  {suppliers.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+                  {SUPPLIERS.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Notas</label>
                 <input type="text" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
                   placeholder="N° factura, referencia..."
+                  className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25 focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">
+                  Costo de envío (se prorratea)
+                </label>
+                <input type="number" min="0" value={shippingCost} onChange={(e) => handleShippingChange(e.target.value)}
+                  placeholder="0"
                   className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25 focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
               </div>
             </div>
@@ -415,14 +268,16 @@ export default function Purchases() {
 
               {items.length > 0 && totalOrder > 0 && (
                 <div className="flex justify-between items-center mt-3 pt-3 border-t border-black/[0.07] dark:border-white/[0.07]">
-                  <span className="text-[12px] text-gray-500 dark:text-white/40">Total orden</span>
+                  <span className="text-[12px] text-gray-500 dark:text-white/40">
+                    Total orden{Number(shippingCost) > 0 ? ` (incluye ${fmt(Number(shippingCost))} de envío)` : ''}
+                  </span>
                   <span className="text-[16px] font-semibold text-gray-900 dark:text-white tabular-nums">{fmt(totalOrder)}</span>
                 </div>
               )}
             </div>
 
             <div className="flex gap-2 mt-2">
-              <Button onClick={() => { setShowForm(false); setItems([emptyItem()]) }} variant="secondary" className="flex-1">Cancelar</Button>
+              <Button onClick={() => { setShowForm(false); setItems([emptyItem()]); setShippingCost('') }} variant="secondary" className="flex-1">Cancelar</Button>
               <Button onClick={handleCreate} disabled={saving || !form.supplier || items.length === 0} className="flex-1">
                 {saving ? 'Guardando...' : 'Crear orden'}
               </Button>
@@ -451,15 +306,20 @@ export default function Purchases() {
                     </div>
                     <p className="text-[11px] text-gray-400 dark:text-white/30 mt-0.5">
                       {item.isNew
-                        ? `Se creará en inventario con stock: ${item.qty}`
+                        ? `Se creará en inventario con stock: ${item.unitsToAdd}`
                         : `Stock actual: ${item.currentStock ?? '?'} → nuevo: ${item.newStock}`
                       }
                     </p>
+                    {item.packSize > 1 && (
+                      <p className="text-[11px] text-indigo-500 dark:text-indigo-400 mt-0.5">
+                        {item.qty} paquete{item.qty !== 1 ? 's' : ''} × {item.packSize} unidades
+                      </p>
+                    )}
                     {item.isNew && !item.salePrice && (
                       <p className="text-[11px] text-amber-500 mt-0.5">⚠ Sin precio de venta — edítalo en inventario</p>
                     )}
                   </div>
-                  <span className="text-[12px] font-medium text-gray-600 dark:text-white/60 shrink-0 ml-2">+{item.qty} uds.</span>
+                  <span className="text-[12px] font-medium text-gray-600 dark:text-white/60 shrink-0 ml-2">+{item.unitsToAdd} uds.</span>
                 </div>
               ))}
             </div>
@@ -473,35 +333,15 @@ export default function Purchases() {
           </div>
         </div>
       )}
-      {cancelConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="w-full max-w-sm bg-white dark:bg-[#141420] rounded-2xl
-            border border-black/[0.08] dark:border-white/[0.1] p-6">
-            <div className="flex items-start gap-3 mb-5">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-red-500/15 text-red-500 text-lg">✕</div>
-              <div>
-                <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">¿Cancelar orden?</h3>
-                <p className="text-[12px] text-gray-500 dark:text-white/40 mt-1">
-                  La orden de <span className="font-medium text-gray-700 dark:text-white/70">{cancelConfirm.supplier}</span> quedará como cancelada. No se actualizará el stock.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => setCancelConfirm(null)}
-                className="flex-1 h-9 rounded-xl text-[12px] font-medium bg-black/[0.04] dark:bg-white/[0.05] text-gray-600 dark:text-white/50 border border-black/[0.08] dark:border-white/[0.08]">
-                Volver
-              </button>
-              <button onClick={handleCancel} disabled={saving}
-                className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
-                {saving ? 'Cancelando...' : 'Sí, cancelar orden'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
+      {/* MODAL — Importar pedido PDF (Embalados / Dimeiggs) */}
+      {showImport && (
+        <ImportPedidoModal
+          products={products}
+          onClose={() => setShowImport(false)}
+          onImported={() => { setShowImport(false); load() }}
+        />
+      )}
     </div>
   )
 }
