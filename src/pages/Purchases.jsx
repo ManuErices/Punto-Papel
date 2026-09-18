@@ -3,8 +3,10 @@ import { createPurchase, getPurchases, receivePurchase, SUPPLIERS } from '../fir
 import { getProducts } from '../firebase/products'
 import { useAuth } from '../context/AuthContext'
 import { Card, Button, Badge } from '../components/ui'
-import { emptyItem, ItemRow, prorateShipping } from './PurchaseItemRow'
+import { emptyItem, ItemRow } from './PurchaseItemRow'
+import { prorateShipping } from '../lib/proration'
 import ImportPedidoModal from './ImportPedidoModal'
+import PurchaseDetailModal from './PurchaseDetailModal'
 
 const fmt = (n) =>
   new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
@@ -25,6 +27,7 @@ export default function Purchases() {
   const [showForm, setShowForm]           = useState(false)
   const [showImport, setShowImport]       = useState(false)
   const [showReceive, setShowReceive]     = useState(null)
+  const [showDetail, setShowDetail]       = useState(null)
   const [form, setForm]                   = useState(EMPTY_FORM)
   const [items, setItems]                 = useState([emptyItem()])
   const [shippingCost, setShippingCost]   = useState('')
@@ -71,6 +74,7 @@ export default function Purchases() {
           qty:       Number(i.qty),
           packSize:  Number(i.packSize) || 1,
           unitCost:  Number(i.unitCost),
+          baseUnitCost: Number(i.baseUnitCost) || Number(i.unitCost),
           costNeto:  Number(i.costNeto) || 0,
           salePrice: Number(i.salePrice),
           category:  i.category,
@@ -176,7 +180,9 @@ export default function Purchases() {
                 {purchases.map((p) => {
                   const newItems = p.items?.filter((i) => i.isNew)?.length || 0
                   return (
-                    <tr key={p.id} className="border-b border-black/[0.04] dark:border-white/[0.04] hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors">
+                    <tr key={p.id}
+                      onClick={() => setShowDetail(p)}
+                      className="border-b border-black/[0.04] dark:border-white/[0.04] hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors cursor-pointer">
                       <td className="px-4 py-3">
                         <p className="font-medium text-[13px] text-gray-900 dark:text-white">{p.supplier}</p>
                         {p.notes && <p className="text-[11px] text-gray-400 dark:text-white/30 mt-0.5 truncate max-w-[160px]">{p.notes}</p>}
@@ -197,7 +203,7 @@ export default function Purchases() {
                       </td>
                       <td className="px-4 py-3">
                         {p.status === 'pendiente' && (
-                          <button onClick={() => openReceive(p)}
+                          <button onClick={(e) => { e.stopPropagation(); openReceive(p) }}
                             className="text-[11px] font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 transition-colors">
                             Marcar recibido
                           </button>
@@ -340,6 +346,19 @@ export default function Purchases() {
           products={products}
           onClose={() => setShowImport(false)}
           onImported={() => { setShowImport(false); load() }}
+        />
+      )}
+      {/* MODAL — Detalle / edición de compra */}
+      {showDetail && (
+        <PurchaseDetailModal
+          purchase={showDetail}
+          onClose={() => setShowDetail(null)}
+          onSaved={async (opts) => {
+            await load()
+            // Si hubo recálculo de inventario, el modal se queda abierto
+            // mostrando el resumen; si no, se cierra.
+            if (!opts?.keepOpen) setShowDetail(null)
+          }}
         />
       )}
     </div>

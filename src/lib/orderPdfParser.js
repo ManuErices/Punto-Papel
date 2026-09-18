@@ -177,8 +177,9 @@ export function parseDimeiggs(text) {
   return items
 }
 
-// ─── Punto de entrada único ──────────────────────────────────────────────────
+// ─── Punto de entrada (parsers exactos) ──────────────────────────────────────
 // text: texto ya reconstruido en orden visual (ver pdfText.js)
+// Devuelve format: null si no reconoce el formato.
 export function parseOrderText(text) {
   const format = detectFormat(text)
   if (!format) return { format: null, items: [], computedTotal: 0 }
@@ -186,4 +187,31 @@ export function parseOrderText(text) {
   const items = format === 'embalados' ? parseEmbalados(text) : parseDimeiggs(text)
   const computedTotal = items.reduce((a, i) => a + i.qty * i.unitCost, 0)
   return { format, items, computedTotal }
+}
+
+// ─── Punto de entrada inteligente (recomendado) ──────────────────────────────
+// Intenta primero los parsers a medida: son instantáneos, gratis y están
+// validados al 100% contra pedidos reales de Embalados y Dimeiggs.
+// Si el formato no se reconoce (proveedor nuevo, factura en vez de pedido,
+// cambio de plantilla), cae automáticamente a la IA — así no hay que escribir
+// un parser nuevo por cada proveedor.
+//
+// Requiere pasarle la función de IA como parámetro para que este archivo siga
+// siendo JS puro sin dependencias de Firebase (facilita testearlo aparte):
+//   import { parseOrderWithAI } from '../firebase/aiOrderParser'
+//   const result = await parseOrderSmart(text, parseOrderWithAI)
+export async function parseOrderSmart(text, aiParser, { forceAI = false } = {}) {
+  if (!forceAI) {
+    const exact = parseOrderText(text)
+    if (exact.format && exact.items.length > 0) {
+      return { ...exact, usedAI: false, priceBasis: 'iva' }
+    }
+  }
+
+  if (!aiParser) {
+    return { format: null, items: [], computedTotal: 0, usedAI: false, priceBasis: 'unknown' }
+  }
+
+  const ai = await aiParser(text)
+  return { ...ai, usedAI: true }
 }

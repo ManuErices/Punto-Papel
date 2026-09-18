@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react'
-import { createPurchase, receivePurchase } from '../firebase/purchases'
+import { createPurchase, receivePurchase, SUPPLIERS } from '../firebase/purchases'
 import { extractLayoutText } from '../lib/pdfText'
-import { parseOrderText, normalizeName } from '../lib/orderPdfParser'
+import { parseOrderSmart, normalizeName } from '../lib/orderPdfParser'
+import { parseOrderWithAI, applyPriceBasis } from '../firebase/aiOrderParser'
 import { useAuth } from '../context/AuthContext'
 import { Button, Badge } from '../components/ui'
 import { ItemRow, emptyItem, prorateShipping } from './PurchaseItemRow'
@@ -9,33 +10,45 @@ import { ItemRow, emptyItem, prorateShipping } from './PurchaseItemRow'
 const fmt = (n) =>
   new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
 
-const FORMAT_LABEL = { embalados: 'Embalados', dimeiggs: 'Dimeiggs' }
+const FORMAT_LABEL = { embalados: 'Embalados', dimeiggs: 'Dimeiggs', ai: 'Leído con IA' }
 
 // Construye un ítem con la misma forma que usa Purchases.jsx (emptyItem),
 // cruzando el producto parseado contra el inventario actual.
+//
+// El cruce depende de qué trae el documento: Embalados trae SKU, así que se
+// cruza por código de barras; los demás por nombre normalizado. Cuando el
+// documento viene de la IA puede traer código o no, así que se intentan ambos.
 function buildItemFromParsed(parsed, format, products) {
   const isEmbalados = format === 'embalados'
 
-  const match = isEmbalados
+  const byCode = parsed.code
     ? products.find((p) => p.barcode && p.barcode === parsed.code)
-    : products.find((p) => normalizeName(p.name) === normalizeName(parsed.name))
+    : null
+  const byName = products.find((p) => normalizeName(p.name) === normalizeName(parsed.name))
+  const match  = isEmbalados ? byCode : (byCode || byName)
+
+  const unitCost = parsed.unitCost
+  const costNeto = parsed.costNeto || Math.round(unitCost / 1.19)
 
   const base = emptyItem()
   return {
     ...base,
-    mode:        match ? 'existing' : 'new',
-    matchedAuto: Boolean(match),
-    productId:   match?.id || '',
-    name:        match?.name || parsed.name,
-    qty:         parsed.qty,
-    unitCost:    parsed.unitCost,
-    baseUnitCost: parsed.unitCost,
-    costNeto:    match?.costNeto || parsed.costNeto || Math.round(parsed.unitCost / 1.19),
-    salePrice:   match?.price || 0,
-    category:    match?.category || '',
-    barcode:     isEmbalados ? parsed.code : (match?.barcode || ''),
-    minStock:    match?.minStock || 5,
-    subtotal:    parsed.qty * parsed.unitCost,
+    mode:         match ? 'existing' : 'new',
+    matchedAuto:  Boolean(match),
+    productId:    match?.id || '',
+    name:         match?.name || parsed.name,
+    qty:          parsed.qty,
+    // docPrice = precio unitario tal como venía en el PDF, sin interpretar.
+    // Permite recalcular si se cambia la lectura del IVA sin acumularlo.
+    docPrice:     parsed.docPrice ?? unitCost,
+    unitCost,
+    baseUnitCost: unitCost,
+    costNeto:     match?.costNeto || costNeto,
+    salePrice:    match?.price || 0,
+    category:     match?.category || '',
+    barcode:      parsed.code || match?.barcode || '',
+    minStock:     match?.minStock || 5,
+    subtotal:     parsed.qty * unitCost,
   }
 }
 
@@ -43,16 +56,20 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
   const { user } = useAuth()
   const fileRef = useRef(null)
 
-  const [step, setStep]           = useState('upload') // 'upload' | 'preview'
-  const [parsing, setParsing]     = useState(false)
-  const [error, setError]         = useState('')
-  const [format, setFormat]       = useState(null)
-  const [items, setItems]         = useState([])
-  const [notes, setNotes]         = useState('')
-  const [saving, setSaving]       = useState(false)
-  const [rawText, setRawText]     = useState('')
-  const [copied, setCopied]       = useState(false)
-  const [dimTotals, setDimTotals] = useState(null)
+  const [step, setStep]         = useState('upload') // 'upload' | 'preview'
+  const [parsing, setParsing]   = useState(false)
+  const [usingAI, setUsingAI]   = useState(false)
+  const [error, setError]       = useState('')
+  const [format, setFormat]     = useState(null)
+  const [usedAI, setUsedAI]     = useState(false)
+  const [items, setItems]       = useState([])
+  const [supplier, setSupplier] = useState('')
+  const [notes, setNotes]       = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [rawText, setRawText]   = useState('')
+  const [copied, setCopied]     = useState(false)
+  const [priceBasis, setPriceBasis]     = useState('iva')
+  const [docTotal, setDocTotal]         = useState(null)
   const [shippingCost, setShippingCost] = useState('')
 
   const handleCopyRaw = async () => {
@@ -70,40 +87,57 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
     if (!file) return
     setError('')
     setParsing(true)
+    setUsingAI(false)
+
     try {
       const text = await extractLayoutText(file)
       setRawText(text)
-      const { format: detected, items: parsedItems } = parseOrderText(text)
 
-      if (!detected) {
-        setError('No reconocí el formato de este PDF. Por ahora esta importación soporta los pedidos de Embalados y Dimeiggs. Puedes cargar los productos a mano con "+ Nueva orden".')
-        setParsing(false)
-        return
-      }
+      // Intenta primero los parsers exactos (Embalados / Dimeiggs); si el
+      // formato no se reconoce, cae automáticamente a la IA.
+      const result = await parseOrderSmart(text, parseOrderWithAI, {
+        onAIFallback: () => setUsingAI(true),
+      })
+
+      const parsedItems = result.items || []
+
       if (parsedItems.length === 0) {
-        setError('Reconocí el formato pero no logré extraer ningún producto. Puede que el PDF tenga un layout distinto al habitual — avísame para ajustar el parser.')
+        setError(
+          result.usedAI
+            ? 'La IA no logró identificar productos en este PDF. Puede que sea un documento escaneado (imagen) o que no sea un pedido. Puedes cargarlo a mano con "+ Nueva orden".'
+            : 'No logré leer este PDF. Puedes cargar los productos a mano con "+ Nueva orden".'
+        )
         setParsing(false)
         return
       }
 
-      const built = parsedItems.map((p) => buildItemFromParsed(p, detected, products))
-      setFormat(detected)
-      setItems(built)
-      setNotes(`Importado de ${FORMAT_LABEL[detected]} — ${file.name}`)
+      const detected = result.format
+      const basis    = result.priceBasis || 'iva'
 
-      if (detected === 'dimeiggs') {
-        const totalConIva = parsedItems.reduce((a, i) => a + i.qty * i.unitCost, 0)
-        const totalNeto   = parsedItems.reduce((a, i) => a + i.qty * i.costNeto, 0)
-        setDimTotals({ totalNeto, totalConIva })
-      } else {
-        setDimTotals(null)
-      }
+      setFormat(detected)
+      setUsedAI(Boolean(result.usedAI))
+      setPriceBasis(basis)
+      setDocTotal(result.documentTotal ?? null)
+      setItems(parsedItems.map((p) => buildItemFromParsed(p, detected, products)))
+
+      // Con los parsers exactos el proveedor se conoce con certeza. Con la IA
+      // solo se usa si logró detectarlo en el PDF: si no, se deja vacío para
+      // que el usuario lo elija (el botón de importar queda deshabilitado).
+      const detectedSupplier = result.usedAI
+        ? (result.supplierName || '')
+        : (FORMAT_LABEL[detected] || '')
+      setSupplier(detectedSupplier)
+      setNotes(`Importado de ${detectedSupplier || 'PDF'} — ${file.name}`)
+
+      // Si el documento declara un costo de envío, se precarga y se prorratea
+      if (result.shippingCost) setShippingCost(String(result.shippingCost))
 
       setStep('preview')
     } catch (err) {
       setError('Error al leer el PDF: ' + err.message)
     } finally {
       setParsing(false)
+      setUsingAI(false)
     }
   }
 
@@ -118,10 +152,24 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
     setItems((prev) => prorateShipping(prev, value))
   }
 
-  const totalOrder   = items.reduce((a, i) => a + (i.subtotal || 0), 0)
-  const nuevos        = items.filter((i) => i.mode === 'new').length
-  const existentes    = items.filter((i) => i.mode === 'existing').length
-  const sinPrecio     = items.filter((i) => i.mode === 'new' && !i.salePrice).length
+  // Cambiar la lectura del IVA recalcula los costos desde el precio original
+  // del documento y vuelve a prorratear el envío sobre la nueva base.
+  const handlePriceBasisChange = (basis) => {
+    setPriceBasis(basis)
+    setItems((prev) => prorateShipping(applyPriceBasis(prev, basis), shippingCost))
+  }
+
+  const totalOrder = items.reduce((a, i) => a + (i.subtotal || 0), 0)
+  const totalNeto  = items.reduce((a, i) => a + i.qty * (i.costNeto || 0), 0)
+  const nuevos     = items.filter((i) => i.mode === 'new').length
+  const existentes = items.filter((i) => i.mode === 'existing').length
+  const sinPrecio  = items.filter((i) => i.mode === 'new' && !i.salePrice).length
+
+  // Descuadre contra el total que declara el documento (si lo trae).
+  // Se compara sin el envío, porque el envío ya va sumado dentro de los ítems.
+  const totalSinEnvio = totalOrder - (Number(shippingCost) || 0)
+  const docDiff       = docTotal ? docTotal - totalSinEnvio : 0
+  const hayDescuadre  = docTotal && Math.abs(docDiff) > 1
 
   const handleImport = async (recibirAhora) => {
     const invalid = items.find((i) => !i.name && !i.productId)
@@ -129,13 +177,13 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
 
     setSaving(true)
     try {
-      const supplierName = FORMAT_LABEL[format] || 'Otro'
       const payloadItems = items.map((i) => ({
         productId: i.productId || null,
         name:      i.name,
         qty:       Number(i.qty),
         packSize:  Number(i.packSize) || 1,
         unitCost:  Number(i.unitCost),
+        baseUnitCost: Number(i.baseUnitCost) || Number(i.unitCost),
         costNeto:  Number(i.costNeto) || 0,
         salePrice: Number(i.salePrice),
         category:  i.category,
@@ -146,12 +194,14 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
       }))
 
       const ref = await createPurchase({
-        supplier: supplierName,
+        supplier:     supplier || 'Otro',
         notes,
         shippingCost: Number(shippingCost) || 0,
-        items: payloadItems,
-        total: totalOrder,
-        userId: user.uid,
+        items:        payloadItems,
+        total:        totalOrder,
+        totalNeto,
+        parsedWithAI: usedAI,
+        userId:       user.uid,
       })
 
       if (recibirAhora) {
@@ -177,6 +227,8 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
     }
   }
 
+  const fieldCls = 'h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 overflow-y-auto" style={{ background: 'rgba(0,0,0,0.7)' }}>
       <div className="w-full max-w-2xl bg-white dark:bg-[#141420] rounded-2xl border border-black/[0.08] dark:border-white/[0.1] p-6 my-4">
@@ -185,20 +237,26 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
           Importar pedido de proveedor
         </h2>
         <p className="text-[12px] text-gray-400 dark:text-white/30 mb-5">
-          Soporta los formatos PDF de Embalados y Dimeiggs
+          Embalados y Dimeiggs se leen al instante; cualquier otro proveedor lo interpreta la IA
         </p>
 
         {step === 'upload' && (
           <div className="flex flex-col gap-4">
             <div
-              onClick={() => fileRef.current?.click()}
+              onClick={() => !parsing && fileRef.current?.click()}
               className="flex flex-col items-center justify-center gap-2 py-12 rounded-2xl border-2 border-dashed
                 border-black/[0.12] dark:border-white/[0.12] cursor-pointer hover:border-indigo-400/50 transition-colors">
               <p className="text-[13px] text-gray-600 dark:text-white/60 font-medium">
-                {parsing ? 'Leyendo PDF...' : 'Click para seleccionar el PDF del pedido'}
+                {!parsing
+                  ? 'Click para seleccionar el PDF del pedido'
+                  : usingAI
+                    ? 'Formato no conocido — interpretando con IA...'
+                    : 'Leyendo PDF...'}
               </p>
               <p className="text-[11px] text-gray-400 dark:text-white/30">
-                Embalados (confirmación de pedido) o Dimeiggs (PedidoDD...)
+                {usingAI
+                  ? 'Esto puede tardar unos segundos'
+                  : 'Pedido, confirmación o factura de cualquier proveedor'}
               </p>
             </div>
             <input ref={fileRef} type="file" accept=".pdf" onChange={handleFile} className="hidden" />
@@ -216,7 +274,7 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
             )}
 
             <div className="flex gap-2 mt-2">
-              <Button onClick={onClose} variant="secondary" className="flex-1">Cancelar</Button>
+              <Button onClick={onClose} variant="secondary" className="flex-1" disabled={parsing}>Cancelar</Button>
             </div>
           </div>
         )}
@@ -224,7 +282,7 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
         {step === 'preview' && (
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge>{FORMAT_LABEL[format]}</Badge>
+              <Badge>{FORMAT_LABEL[format] || 'Documento'}</Badge>
               <Badge variant="ok">{existentes} existente{existentes !== 1 ? 's' : ''}</Badge>
               {nuevos > 0 && <Badge variant="low">{nuevos} nuevo{nuevos !== 1 ? 's' : ''}</Badge>}
               <span className="text-[11px] text-gray-400 dark:text-white/30 ml-auto">
@@ -232,10 +290,42 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
               </span>
             </div>
 
-            {dimTotals && (
-              <div className="px-3 py-2 rounded-xl bg-indigo-500/[0.07] border border-indigo-500/20">
+            {/* Lectura del IVA — solo cuando el documento lo leyó la IA, porque
+                en Embalados y Dimeiggs ya sabemos con certeza cómo vienen */}
+            {usedAI && (
+              <div className="px-3 py-2.5 rounded-xl bg-indigo-500/[0.07] border border-indigo-500/20 flex flex-col gap-2">
                 <p className="text-[11px] text-indigo-600 dark:text-indigo-400">
-                  Costo con IVA (usado abajo): {fmt(dimTotals.totalConIva)} · Costo neto: {fmt(dimTotals.totalNeto)}. Compara el total con IVA contra tu pedido en Dimeiggs — si no coincide, puede que el pedido tenga algún cargo adicional no desglosado por producto (revísalo en tu cuenta de Dimeiggs).
+                  {priceBasis === 'unknown'
+                    ? 'Este PDF no aclara si los precios incluyen IVA. Está asumiendo que SÍ lo incluyen — si no es así, cámbialo aquí:'
+                    : 'Los precios de este documento se están interpretando como:'}
+                </p>
+                <div className="flex gap-1 p-0.5 rounded-lg bg-black/[0.04] dark:bg-white/[0.06] self-start">
+                  {[
+                    { key: 'iva',  label: 'Precios CON IVA' },
+                    { key: 'neto', label: 'Precios NETOS' },
+                  ].map((opt) => (
+                    <button key={opt.key} onClick={() => handlePriceBasisChange(opt.key)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                        (priceBasis === 'neto' ? 'neto' : 'iva') === opt.key
+                          ? 'text-white'
+                          : 'text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60'
+                      }`}
+                      style={(priceBasis === 'neto' ? 'neto' : 'iva') === opt.key
+                        ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Descuadre contra el total declarado por el documento */}
+            {hayDescuadre && (
+              <div className="px-3 py-2 rounded-xl bg-amber-500/[0.07] border border-amber-500/20">
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  ⚠ El documento declara un total de {fmt(docTotal)}, pero la suma de los productos da {fmt(totalSinEnvio)} —
+                  una diferencia de {fmt(Math.abs(docDiff))}. Puede ser un cargo no desglosado por producto (despacho, servicio).
+                  {docDiff > 0 && ' Si es despacho, cárgalo en "Costo de envío" para que se reparta entre los productos.'}
                 </p>
               </div>
             )}
@@ -248,25 +338,27 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Proveedor *</label>
+                <input type="text" list="proveedores-sugeridos" value={supplier}
+                  onChange={(e) => setSupplier(e.target.value)}
+                  placeholder="Nombre del proveedor" className={fieldCls} />
+                <datalist id="proveedores-sugeridos">
+                  {SUPPLIERS.map((s) => <option key={s} value={s} />)}
+                </datalist>
+              </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Notas</label>
-                <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
-                  className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
-                    border border-black/[0.08] dark:border-white/[0.08]
-                    text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+                <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} className={fieldCls} />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">
-                  Costo de envío (se prorratea entre los productos)
+                  Envío (se prorratea)
                 </label>
                 <input type="number" min="0" value={shippingCost}
                   onChange={(e) => handleShippingChange(e.target.value)}
-                  placeholder="0"
-                  className="h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05]
-                    border border-black/[0.08] dark:border-white/[0.08]
-                    text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25
-                    focus:outline-none focus:ring-2 focus:ring-indigo-500/30" />
+                  placeholder="0" className={fieldCls} />
               </div>
             </div>
 
@@ -282,11 +374,17 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
               ))}
             </div>
 
-            <div className="flex justify-between items-center pt-3 border-t border-black/[0.07] dark:border-white/[0.07]">
-              <span className="text-[12px] text-gray-500 dark:text-white/40">
-                Total del pedido{Number(shippingCost) > 0 ? ` (incluye ${fmt(Number(shippingCost))} de envío)` : ''}
-              </span>
-              <span className="text-[16px] font-semibold text-gray-900 dark:text-white tabular-nums">{fmt(totalOrder)}</span>
+            <div className="flex flex-col gap-1 pt-3 border-t border-black/[0.07] dark:border-white/[0.07]">
+              <div className="flex justify-between items-center text-[11px] text-gray-400 dark:text-white/30">
+                <span>Costo neto (referencia)</span>
+                <span className="tabular-nums">{fmt(totalNeto)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[12px] text-gray-500 dark:text-white/40">
+                  Total del pedido{Number(shippingCost) > 0 ? ` (incluye ${fmt(Number(shippingCost))} de envío)` : ''}
+                </span>
+                <span className="text-[16px] font-semibold text-gray-900 dark:text-white tabular-nums">{fmt(totalOrder)}</span>
+              </div>
             </div>
 
             {error && (
@@ -299,10 +397,10 @@ export default function ImportPedidoModal({ products, onClose, onImported }) {
               <Button onClick={onClose} variant="secondary" className="flex-1" disabled={saving}>
                 Cancelar
               </Button>
-              <Button onClick={() => handleImport(false)} variant="secondary" className="flex-1" disabled={saving}>
+              <Button onClick={() => handleImport(false)} variant="secondary" className="flex-1" disabled={saving || !supplier}>
                 {saving ? 'Guardando...' : 'Importar como pendiente'}
               </Button>
-              <Button onClick={() => handleImport(true)} className="flex-1" disabled={saving}>
+              <Button onClick={() => handleImport(true)} className="flex-1" disabled={saving || !supplier}>
                 {saving ? 'Guardando...' : 'Importar y sumar a stock'}
               </Button>
             </div>

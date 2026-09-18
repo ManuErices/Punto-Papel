@@ -25,31 +25,10 @@ export const emptyItem = () => ({
   subtotal:   0,
 })
 
-// Reparte un costo de envío entre los ítems, proporcional al costo de cada
-// uno dentro del total del pedido (a más costo, más envío le corresponde).
-// Siempre parte desde el costo BASE de cada ítem (antes de envío), así que
-// se puede llamar de nuevo con otro monto sin ir acumulando sobre el
-// prorrateo anterior.
-export function prorateShipping(items, shippingCost) {
-  const shipping = Number(shippingCost) || 0
-  const baseTotal = items.reduce((a, i) => a + i.qty * (i.baseUnitCost || 0), 0)
-
-  return items.map((i) => {
-    const base = i.baseUnitCost || 0
-    if (!shipping || !baseTotal || !i.qty) {
-      return { ...i, unitCost: base, costNeto: Math.round(base / 1.19), subtotal: i.qty * base }
-    }
-    const baseSub      = i.qty * base
-    const share         = shipping * (baseSub / baseTotal)
-    const newUnitCost   = Math.round(base + share / i.qty)
-    return {
-      ...i,
-      unitCost: newUnitCost,
-      costNeto: Math.round(newUnitCost / 1.19),
-      subtotal: i.qty * newUnitCost,
-    }
-  })
-}
+// El prorrateo de envío vive en lib/proration.js porque lo usa también la capa
+// de datos (firebase/purchases.js, al recalcular una compra ya guardada).
+// Se reexporta desde aquí para no romper los imports existentes.
+export { prorateShipping } from '../lib/proration'
 
 export function ItemRow({ item, products, onChange, onRemove }) {
   const update = (field, value) => {

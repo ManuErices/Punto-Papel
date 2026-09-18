@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { subscribeProducts, addProduct, updateProduct, deleteProduct } from '../firebase/products'
 import { addCashEntry } from '../firebase/cashflow'
 import { Card, Button, Badge, Input } from '../components/ui'
+import MarketPriceModal from './MarketPriceModal'
+import BarcodeLabelsModal from './BarcodeLabelsModal'
 
 const fmt = (n) =>
   new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
@@ -109,6 +111,9 @@ export default function Inventory() {
   const [stockTakeMode, setStockTakeMode] = useState(false)
   const [stockTake, setStockTake]         = useState({})
   const [shrinkageItem, setShrinkageItem] = useState(null)
+  const [showMarket, setShowMarket]       = useState(false)
+  const [marketMsg, setMarketMsg]         = useState('')
+  const [showLabels, setShowLabels]       = useState(false)
 
   useEffect(() => { const unsub = subscribeProducts(setProducts); return unsub }, [])
 
@@ -211,6 +216,8 @@ export default function Inventory() {
             </>
           ) : (
             <>
+              <Button onClick={() => setShowLabels(true)} variant="secondary">Imprimir códigos</Button>
+              <Button onClick={() => setShowMarket(true)} variant="secondary">Precios de mercado</Button>
               <Button onClick={startStockTake} variant="secondary">Hacer inventariado</Button>
               <Button onClick={openNew}>+ Agregar producto</Button>
             </>
@@ -228,6 +235,14 @@ export default function Inventory() {
         </div>
       )}
 
+      {marketMsg && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-2xl
+          bg-emerald-500/[0.08] border border-emerald-500/20">
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <p className="text-[12px] text-emerald-600 dark:text-emerald-400 font-medium">{marketMsg}</p>
+        </div>
+      )}
+
       <input type="text" placeholder="Buscar por nombre, categoría o código..."
         value={search} onChange={(e) => setSearch(e.target.value)}
         className="h-10 rounded-xl px-3 text-sm w-full max-w-sm
@@ -239,6 +254,19 @@ export default function Inventory() {
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+            {/* Anchos proporcionales al contenido: el nombre del producto es
+                lo más largo, y "Unidad" siempre dice lo mismo. Sin esto, con
+                tableLayout fixed las 7 columnas se reparten en partes iguales
+                y el nombre queda cortado. */}
+            <colgroup>
+              <col style={{ width: '36%' }} />{/* Producto */}
+              <col style={{ width: '9%'  }} />{/* Unidad   */}
+              <col style={{ width: '12%' }} />{/* Precio   */}
+              <col style={{ width: '11%' }} />{/* Costo    */}
+              <col style={{ width: '9%'  }} />{/* Margen   */}
+              <col style={{ width: stockTakeMode ? '13%' : '10%' }} />{/* Stock */}
+              <col style={{ width: stockTakeMode ? '10%' : '13%' }} />{/* Acciones */}
+            </colgroup>
             <thead>
               <tr className="border-b border-black/[0.07] dark:border-white/[0.07]">
                 {['Producto', 'Unidad', 'Precio', 'Costo', 'Margen',
@@ -268,7 +296,7 @@ export default function Inventory() {
                   <tr key={p.id} className={`border-b border-black/[0.04] dark:border-white/[0.04] transition-colors
                     ${hasChanged ? 'bg-indigo-500/[0.04]' : 'hover:bg-black/[0.02] dark:hover:bg-white/[0.02]'}`}>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-gray-900 dark:text-white text-[13px] truncate">{p.name}</p>
+                      <p className="font-medium text-gray-900 dark:text-white text-[13px] leading-snug break-words">{p.name}</p>
                       {p.barcode && <p className="text-[10px] text-gray-400 dark:text-white/25">{p.barcode}</p>}
                     </td>
                     <td className="px-4 py-3">
@@ -278,6 +306,11 @@ export default function Inventory() {
                     </td>
                     <td className="px-4 py-3 text-[13px] font-medium text-gray-900 dark:text-white tabular-nums">
                       {fmt(p.price)}
+                      {p.marketPrice > 0 && (
+                        <p className="text-[10px] text-gray-400 dark:text-white/25 font-normal">
+                          mercado {fmt(p.marketPrice)}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-[12px] text-gray-500 dark:text-white/45 tabular-nums">
                       {p.cost ? fmt(p.cost) : '—'}
@@ -348,6 +381,25 @@ export default function Inventory() {
           onCancel={() => {
             setStockTake((prev) => ({ ...prev, [shrinkageItem.product.id]: String(shrinkageItem.product.stock) }))
             setShrinkageItem(null)
+          }}
+        />
+      )}
+
+      {showLabels && (
+        <BarcodeLabelsModal
+          products={products}
+          onClose={() => setShowLabels(false)}
+        />
+      )}
+
+      {showMarket && (
+        <MarketPriceModal
+          products={products}
+          onClose={() => setShowMarket(false)}
+          onApplied={(n) => {
+            setShowMarket(false)
+            setMarketMsg(`${n} precio${n !== 1 ? 's' : ''} actualizado${n !== 1 ? 's' : ''}`)
+            setTimeout(() => setMarketMsg(''), 4000)
           }}
         />
       )}
