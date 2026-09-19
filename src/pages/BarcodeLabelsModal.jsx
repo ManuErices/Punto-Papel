@@ -7,13 +7,35 @@ import { Button, Badge } from '../components/ui'
 const fmt = (n) =>
   new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n)
 
-// Tamaño de etiqueta pedido: 6 cm de ancho × 4,2 cm de alto
-const LABEL_W = 60 // mm
+// Tamaño de etiqueta pedido: 8 cm de ancho × 4,2 cm de alto
+const LABEL_W = 80 // mm
 const LABEL_H = 42 // mm
 
-// En una hoja A4 (210×297mm) caben 3 columnas × 6 filas = 18 etiquetas
-const A4_COLS = 3
-const A4_ROWS = 6
+// Tamaños de papel (mm). El tamaño declarado en @page DEBE coincidir con el
+// papel real de la impresora: si no, el navegador escala la página para que
+// quepa y las etiquetas dejan de medir 6 × 4,2 cm.
+const PAPERS = {
+  carta: { label: 'Carta', w: 216, h: 279 },
+  a4:    { label: 'A4',    w: 210, h: 297 },
+}
+// Margen mínimo que necesita la impresora para no cortar contenido
+const MIN_MARGIN_X = 10 // mm
+const MIN_MARGIN_Y = 8  // mm
+
+// Cuántas etiquetas caben según el papel elegido, y con qué márgenes.
+// Primero se calcula la grilla con el margen mínimo, y después se reparte el
+// espacio sobrante en partes iguales a cada lado: así el bloque queda centrado
+// en la hoja y los márgenes de corte son parejos.
+function gridFor(paperKey) {
+  const p    = PAPERS[paperKey]
+  const cols = Math.floor((p.w - MIN_MARGIN_X * 2) / LABEL_W)
+  const rows = Math.floor((p.h - MIN_MARGIN_Y * 2) / LABEL_H)
+  // Hacia abajo y con 1mm de holgura: si los márgenes suman aunque sea una
+  // fracción más que la hoja, la última fila se va a una página extra.
+  const marginX = Math.max(MIN_MARGIN_X, Math.floor((p.w - cols * LABEL_W) / 2) - 1)
+  const marginY = Math.max(MIN_MARGIN_Y, Math.floor((p.h - rows * LABEL_H) / 2) - 1)
+  return { cols, rows, perSheet: cols * rows, marginX, marginY }
+}
 
 // Genera el SVG del código de barras.
 // Se intenta primero el formato específico (EAN13) y, si el código no es
@@ -55,8 +77,10 @@ const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g, (c) =>
 export default function BarcodeLabelsModal({ products, onClose }) {
   const [search, setSearch]   = useState('')
   const [qty, setQty]         = useState({})   // { productId: cantidad de etiquetas }
-  const [layout, setLayout]   = useState('a4') // 'a4' | 'rollo'
+  const [layout, setLayout]   = useState('hoja')  // 'hoja' | 'rollo'
+  const [paper, setPaper]     = useState('carta') // 'carta' | 'a4'
   const [showPrice, setShowPrice] = useState(true)
+  const [cutLines, setCutLines]   = useState('solida') // 'solida' | 'punteada' | 'ninguna'
   const [generating, setGenerating] = useState(false)
   const [error, setError]     = useState('')
   const [msg, setMsg]         = useState('')
@@ -121,11 +145,25 @@ export default function BarcodeLabelsModal({ products, onClose }) {
         <div class="bc">${svg}</div>
       </div>`).join('')
 
+    const pg = PAPERS[paper]
+    const g  = gridFor(paper)
+
+    // Guías de corte. Antes eran gris clarito Y encima se volvían
+    // transparentes al imprimir, así que en el papel no salía ninguna línea.
+    const CUT_W = 0.3 // mm de grosor de la guía
+    const cutBorder = {
+      solida:   `${CUT_W}mm solid #555`,
+      punteada: `${CUT_W}mm dashed #777`,
+      ninguna:  'none',
+    }[cutLines]
+    // Se superpone exactamente el grosor del borde para fundir los de etiquetas
+    // vecinas en una sola línea
+    const cutOverlap = cutLines === 'ninguna' ? '0' : `-${CUT_W}mm`
     const pageCSS = layout === 'rollo'
       ? `@page { size: ${LABEL_W}mm ${LABEL_H}mm; margin: 0 }
          .label { page-break-after: always; border: none }
          .sheet { display: block }`
-      : `@page { size: A4; margin: 8mm 12mm }
+      : `@page { size: ${pg.w}mm ${pg.h}mm; margin: ${g.marginY}mm ${g.marginX}mm }
          .sheet { display: flex; flex-wrap: wrap }`
 
     const win = window.open('', '_blank', 'width=900,height=700')
@@ -146,18 +184,23 @@ export default function BarcodeLabelsModal({ products, onClose }) {
           display: flex; flex-direction: column; align-items: center;
           justify-content: space-between;
           overflow: hidden;
-          border: 0.2mm dashed #ddd;   /* guía de corte, casi invisible al imprimir */
+          border: ${cutBorder};
+          /* Los bordes de dos etiquetas contiguas se superponen con este
+             margen negativo, así entre una y otra queda UNA sola línea en vez
+             de dos pegadas (que salían al doble de grosor). */
+          margin: 0 ${cutOverlap} ${cutOverlap} 0;
         }
         .name {
-          font-size: 8pt; font-weight: 600; line-height: 1.15; text-align: center;
+          font-size: 9pt; font-weight: 600; line-height: 1.15; text-align: center;
           width: 100%;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
           overflow: hidden;
         }
-        .price { font-size: 17pt; font-weight: 700; line-height: 1; margin: 0.5mm 0 }
+        .price { font-size: 19pt; font-weight: 700; line-height: 1; margin: 0.5mm 0 }
         .bc { width: 100%; text-align: center; line-height: 0 }
-        .bc svg { width: 100%; height: auto; max-height: 16mm }
-        @media print { .label { border-color: transparent } }
+        /* No se estira el código a los 80mm completos: un EAN-13 muy ancho
+           se ve raro y no aporta legibilidad al escáner */
+        .bc svg { width: 100%; max-width: 62mm; height: auto; max-height: 16mm }
         ${pageCSS}
       </style></head><body><div class="sheet">${html}</div></body></html>`)
     win.document.close()
@@ -166,8 +209,9 @@ export default function BarcodeLabelsModal({ products, onClose }) {
     setTimeout(() => { win.focus(); win.print() }, 500)
   }
 
-  const hojas = layout === 'a4'
-    ? Math.ceil(totalEtiquetas / (A4_COLS * A4_ROWS))
+  const grid  = gridFor(paper)
+  const hojas = layout === 'hoja'
+    ? Math.ceil(totalEtiquetas / grid.perSheet)
     : totalEtiquetas
 
   const inputCls = 'h-9 rounded-lg px-3 text-[13px] bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-white/25 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
@@ -193,7 +237,7 @@ export default function BarcodeLabelsModal({ products, onClose }) {
             <span className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Formato</span>
             <div className="flex gap-1 p-0.5 rounded-lg bg-black/[0.04] dark:bg-white/[0.06]">
               {[
-                { key: 'a4',    label: `Hoja A4 (${A4_COLS}×${A4_ROWS})` },
+                { key: 'hoja',  label: `Hoja (${grid.cols}×${grid.rows})` },
                 { key: 'rollo', label: 'Rollo de etiquetas' },
               ].map((o) => (
                 <button key={o.key} onClick={() => setLayout(o.key)}
@@ -206,6 +250,46 @@ export default function BarcodeLabelsModal({ products, onClose }) {
               ))}
             </div>
           </div>
+
+          {/* El papel elegido debe coincidir con el que tiene la impresora:
+              si no, el navegador escala la hoja y las etiquetas cambian de tamaño */}
+          {layout === 'hoja' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Papel</span>
+              <div className="flex gap-1 p-0.5 rounded-lg bg-black/[0.04] dark:bg-white/[0.06]">
+                {Object.entries(PAPERS).map(([key, v]) => (
+                  <button key={key} onClick={() => setPaper(key)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                      paper === key ? 'text-white' : 'text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60'
+                    }`}
+                    style={paper === key ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {layout === 'hoja' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-white/40">Guías de corte</span>
+              <div className="flex gap-1 p-0.5 rounded-lg bg-black/[0.04] dark:bg-white/[0.06]">
+                {[
+                  { key: 'solida',   label: 'Línea' },
+                  { key: 'punteada', label: 'Punteada' },
+                  { key: 'ninguna',  label: 'Sin guías' },
+                ].map((o) => (
+                  <button key={o.key} onClick={() => setCutLines(o.key)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                      cutLines === o.key ? 'text-white' : 'text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60'
+                    }`}
+                    style={cutLines === o.key ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' } : {}}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button onClick={() => setShowPrice(!showPrice)}
             className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-white/40 hover:text-gray-700 dark:hover:text-white/60">
@@ -299,10 +383,18 @@ export default function BarcodeLabelsModal({ products, onClose }) {
             {totalEtiquetas} etiqueta{totalEtiquetas !== 1 ? 's' : ''} · {seleccionados.length} producto{seleccionados.length !== 1 ? 's' : ''}
           </span>
           <span className="text-[12px] text-gray-400 dark:text-white/30">
-            {totalEtiquetas > 0 && (layout === 'a4'
-              ? `${hojas} hoja${hojas !== 1 ? 's' : ''} A4`
+            {totalEtiquetas > 0 && (layout === 'hoja'
+              ? `${hojas} hoja${hojas !== 1 ? 's' : ''} ${PAPERS[paper].label}`
               : `${hojas} etiqueta${hojas !== 1 ? 's' : ''} del rollo`)}
           </span>
+        </div>
+
+        <div className="px-3 py-2 rounded-xl bg-indigo-500/[0.07] border border-indigo-500/20 mb-4">
+          <p className="text-[11px] text-indigo-600 dark:text-indigo-400">
+            En el diálogo de impresión: pon <strong>Escala 100%</strong> (no "Ajustar a la página") y
+            el papel en <strong>{layout === 'hoja' ? PAPERS[paper].label : `${LABEL_W}×${LABEL_H} mm`}</strong>.
+            Si queda en "ajustar", el navegador achica todo y las etiquetas dejan de medir {LABEL_W / 10} × {LABEL_H / 10} cm.
+          </p>
         </div>
 
         <div className="flex gap-2">
