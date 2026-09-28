@@ -15,15 +15,25 @@ const PAYMENT_METHODS = [
   { key: 'transfer', label: 'Transferencia', hint: 'Pago digital' },
 ]
 
-// Servicios rápidos de fotocopia/impresión — precio por unidad
+// Precio por volumen: desde esta cantidad de hojas se aplica bulkPrice a TODAS las hojas
+const BULK_MIN_QTY = 11 // "sobre 10 hojas"
+
+// Servicios rápidos de fotocopia/impresión — precio por unidad.
+// Los que tienen bulkPrice usan precio escalonado y NO se sobreescriben con localStorage.
 const QUICK_SERVICES = [
-  { id: 'fotocopia-bn',    name: 'Fotocopia B/N',      priceKey: 'fotocopia_bn',    defaultPrice: 50,   icon: '📄' },
-  { id: 'fotocopia-color', name: 'Fotocopia Color',    priceKey: 'fotocopia_color', defaultPrice: 200,  icon: '🖨️' },
-  { id: 'impresion-bn',    name: 'Impresión B/N',      priceKey: 'impresion_bn',    defaultPrice: 100,  icon: '🖤' },
-  { id: 'impresion-color', name: 'Impresión Color',    priceKey: 'impresion_color', defaultPrice: 300,  icon: '🎨' },
+  { id: 'fotocopia-bn',    name: 'Fotocopia B/N',      priceKey: 'fotocopia_bn',    defaultPrice: 200,  bulkPrice: 150, icon: '📄' },
+  { id: 'fotocopia-color', name: 'Fotocopia Color',    priceKey: 'fotocopia_color', defaultPrice: 300,  bulkPrice: 200, icon: '🖨️' },
+  { id: 'impresion-bn',    name: 'Impresión B/N',      priceKey: 'impresion_bn',    defaultPrice: 200,  bulkPrice: 150, icon: '🖤' },
+  { id: 'impresion-color', name: 'Impresión Color',    priceKey: 'impresion_color', defaultPrice: 300,  bulkPrice: 200, icon: '🎨' },
   { id: 'anillado',        name: 'Anillado',           priceKey: 'anillado',        defaultPrice: 1500, icon: '📎' },
   { id: 'enmicado',        name: 'Enmicado',           priceKey: 'enmicado',        defaultPrice: 800,  icon: '✨' },
 ]
+
+// Precio unitario según cantidad (escalonado si el servicio tiene bulkPrice)
+function getServiceUnitPrice(service, qty, prices = {}) {
+  if (service.bulkPrice) return qty >= BULK_MIN_QTY ? service.bulkPrice : service.defaultPrice
+  return prices[service.priceKey] || service.defaultPrice
+}
 
 function Tooltip({ text }) {
   return (
@@ -48,8 +58,10 @@ function KbdHint({ keys }) {
 // Modal para ingresar cantidad de servicio rápido
 function QuickServiceModal({ service, prices, onAdd, onClose }) {
   const [qty, setQty]   = useState('')
-  const price = prices[service.priceKey] || service.defaultPrice
-  const total = qty ? Number(qty) * price : 0
+  const qtyNum  = Number(qty) || 0
+  const price   = getServiceUnitPrice(service, qtyNum, prices)
+  const total   = qtyNum * price
+  const isBulk  = !!service.bulkPrice && qtyNum >= BULK_MIN_QTY
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -61,7 +73,11 @@ function QuickServiceModal({ service, prices, onAdd, onClose }) {
           <span className="text-2xl">{service.icon}</span>
           <div>
             <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">{service.name}</h3>
-            <p className="text-[12px] text-gray-400 dark:text-white/30">{fmt(price)} c/u</p>
+            <p className="text-[12px] text-gray-400 dark:text-white/30">
+              {service.bulkPrice
+                ? `${fmt(service.defaultPrice)} c/u · ${fmt(service.bulkPrice)} desde ${BULK_MIN_QTY}`
+                : `${fmt(price)} c/u`}
+            </p>
           </div>
         </div>
         <div className="flex flex-col gap-3">
@@ -77,7 +93,9 @@ function QuickServiceModal({ service, prices, onAdd, onClose }) {
           </div>
           {total > 0 && (
             <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-indigo-500/10">
-              <span className="text-[12px] text-indigo-600 dark:text-indigo-400">Total</span>
+              <span className="text-[12px] text-indigo-600 dark:text-indigo-400">
+                Total <span className="opacity-70">({qtyNum} × {fmt(price)}{isBulk ? ' · precio por volumen' : ''})</span>
+              </span>
               <span className="text-[18px] font-semibold text-indigo-600 dark:text-indigo-400 tabular-nums">{fmt(total)}</span>
             </div>
           )}
@@ -88,7 +106,7 @@ function QuickServiceModal({ service, prices, onAdd, onClose }) {
                 border border-black/[0.08] dark:border-white/[0.08]">
               Cancelar
             </button>
-            <button onClick={() => { if (qty && Number(qty) > 0) { onAdd(service, Number(qty), price); onClose() }}}
+            <button onClick={() => { if (qty && Number(qty) > 0) { onAdd(service, qtyNum); onClose() }}}
               disabled={!qty || Number(qty) <= 0}
               className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white disabled:opacity-40"
               style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
@@ -557,17 +575,23 @@ export default function POS() {
   }, [scannerActive])
 
   // Agregar servicio rápido al carrito (sin productId — no descuenta stock)
-  const addQuickService = (service, qty, price) => {
-    const subtotal = qty * price
+  // El precio unitario se recalcula con la cantidad total de la línea
+  // (ej: 6 + 6 fotocopias = 12 → todas a precio por volumen)
+  const addQuickService = (service, qty) => {
     setCart((prev) => {
       const key = `quick-${service.id}`
       const existing = prev.find((i) => i.productId === key)
       if (existing) {
+        const newQty   = existing.qty + qty
+        const newPrice = getServiceUnitPrice(service, newQty, servicePrices)
+        const effPrice = newPrice * (1 - (existing.discount || 0) / 100)
         return prev.map((i) => i.productId === key
-          ? { ...i, qty: i.qty + qty, subtotal: (i.qty + qty) * price }
+          ? { ...i, qty: newQty, price: newPrice, subtotal: newQty * effPrice }
           : i
         )
       }
+      const price    = getServiceUnitPrice(service, qty, servicePrices)
+      const subtotal = qty * price
       return [...prev, {
         productId: key,
         name:      service.name,
@@ -579,6 +603,7 @@ export default function POS() {
         discount:  0,
         subtotal,
         isService: true,
+        serviceId: service.id,
       }]
     })
   }
@@ -624,8 +649,11 @@ export default function POS() {
     setCart((prev) => prev.map((i) => {
       if (i.productId !== productId) return i
       const safeQty  = i.isService ? qty : Math.min(qty, i.stock)
-      const effPrice = i.price * (1 - (i.discount || 0) / 100)
-      return { ...i, qty: safeQty, subtotal: safeQty * effPrice }
+      // Servicios con precio escalonado: recalcular unitario al cambiar cantidad
+      const svc      = i.serviceId && QUICK_SERVICES.find((q) => q.id === i.serviceId)
+      const unit     = svc?.bulkPrice ? getServiceUnitPrice(svc, safeQty, servicePrices) : i.price
+      const effPrice = unit * (1 - (i.discount || 0) / 100)
+      return { ...i, qty: safeQty, price: unit, subtotal: safeQty * effPrice }
     }))
   }
 
@@ -742,7 +770,7 @@ export default function POS() {
         <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
           {QUICK_SERVICES.map((svc) => {
             const isAnillado = svc.id === 'anillado'
-            const price = servicePrices[svc.priceKey] || svc.defaultPrice
+            const price = getServiceUnitPrice(svc, 1, servicePrices)
             return (
               <button key={svc.id}
                 onClick={() => isAnillado ? setShowAnillado(true) : setQuickService(svc)}
@@ -753,7 +781,11 @@ export default function POS() {
                 <span className="text-xl">{svc.icon}</span>
                 <span className="text-[11px] font-medium text-gray-700 dark:text-white/70 leading-tight">{svc.name}</span>
                 <span className="text-[10px] text-gray-400 dark:text-white/30 tabular-nums">
-                  {isAnillado ? 'Según desglose' : `${fmt(price)}/u`}
+                  {isAnillado
+                    ? 'Según desglose'
+                    : svc.bulkPrice
+                      ? `${fmt(price)}/u · ${fmt(svc.bulkPrice)} +${BULK_MIN_QTY - 1}`
+                      : `${fmt(price)}/u`}
                 </span>
               </button>
             )
