@@ -241,7 +241,7 @@ export default function Dashboard() {
         <div className="rounded-2xl p-4 relative overflow-hidden" style={{ background: 'linear-gradient(135deg,#4c1d95,#5b21b6)' }}>
           <p className="text-[10px] uppercase tracking-widest text-white/50 mb-1">Caja actual</p>
           <p className="text-[22px] font-semibold text-white tracking-tight tabular-nums">{fmt(cashBalance)}</p>
-          <p className="text-[11px] text-white/40 mt-1">efectivo + débito</p>
+          <p className="text-[11px] text-white/40 mt-1">todos los medios · hoy</p>
         </div>
       </div>
 

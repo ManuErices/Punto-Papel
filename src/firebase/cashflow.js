@@ -5,6 +5,10 @@ import {
 import { db } from './config'
 
 const COL       = 'cashflow'
+
+// Fecha local YYYY-MM-DD (toISOString usa UTC: en Chile, después de las ~20-21h daba el día siguiente)
+const localDate = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const COL_CLOSE = 'cashCloses'
 
 export const addCashEntry = ({ type, amount, concept, userId, saleId = null }) =>
@@ -52,7 +56,7 @@ export const createCashClose = async ({ expectedCash, actualCash, userId, notes 
     difference:  diff, // positivo = sobra, negativo = falta
     notes:       notes || '',
     userId,
-    date:        new Date().toISOString().slice(0, 10), // YYYY-MM-DD
+    date:        localDate(), // YYYY-MM-DD
     createdAt:   serverTimestamp(),
   })
 }
@@ -80,7 +84,7 @@ export const createCashOpen = ({ amount, userId, notes }) =>
     amount,
     notes: notes || '',
     userId,
-    date:      new Date().toISOString().slice(0, 10),
+    date:      localDate(),
     createdAt: serverTimestamp(),
   })
 

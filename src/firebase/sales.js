@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, updateDoc, getDoc, doc,
+  collection, doc,
   getDocs, query, where, orderBy, serverTimestamp,
   Timestamp, runTransaction,
 } from 'firebase/firestore'
@@ -9,99 +9,113 @@ const COL      = 'sales'
 const COL_CASH = 'cashflow'
 const COL_PROD = 'products'
 
+// Ítems que no descuentan stock: servicios rápidos, anillado, o sin productId
+const isStockItem = (item) => !!item.productId && !item.isService
+
 export const createSale = async ({ items, total, subtotal, discount, paymentMethod, userId, receipt }) => {
-  // 1. Verificar stock
-  for (const item of items) {
-    if (!item.productId) continue
-    const snap = await getDoc(doc(db, COL_PROD, item.productId))
-    if (!snap.exists()) throw new Error(`Producto no encontrado: ${item.name}`)
-    const currentStock = snap.data().stock ?? 0
-    if (currentStock < item.qty)
-      throw new Error(`Stock insuficiente para "${item.name}". Disponible: ${currentStock}, requerido: ${item.qty}`)
-  }
-
-  // 2. Descontar stock atómicamente — guardamos snapshot del precio actual
-  const itemsWithSnapshot = []
-  await runTransaction(db, async (tx) => {
-    for (const item of items) {
-      if (!item.productId) { itemsWithSnapshot.push(item); continue }
-      const ref  = doc(db, COL_PROD, item.productId)
-      const snap = await tx.get(ref)
-      if (!snap.exists()) throw new Error(`Producto no encontrado: ${item.name}`)
-      const data         = snap.data()
-      const currentStock = data.stock ?? 0
-      if (currentStock < item.qty) throw new Error(`Stock insuficiente para "${item.name}"`)
-      tx.update(ref, { stock: currentStock - item.qty })
-      // Guardar el precio y costo al momento de la venta (snapshot histórico)
-      itemsWithSnapshot.push({
-        ...item,
-        priceAtSale: item.price,        // precio cobrado
-        costAtSale:  data.cost ?? 0,    // costo al momento de vender
-        unit:        data.unit || 'unidad',
-      })
-    }
-  })
-
-  // 3. Guardar venta con snapshot de precios
   const receiptNumber = receipt || Date.now()
-  const saleRef = await addDoc(collection(db, COL), {
-    items:        itemsWithSnapshot,
-    total,
-    subtotal:     subtotal || total,
-    discount:     discount || 0,
-    paymentMethod,
-    userId,
-    receipt:      receiptNumber,
-    status:       'completed',
-    voidReason:   null,
-    voidedAt:     null,
-    voidedBy:     null,
-    createdAt:    serverTimestamp(),
-  })
+  const saleRef = doc(collection(db, COL))
+  const cashRef = doc(collection(db, COL_CASH))
 
-  // 4. Registrar ingreso en cashflow automáticamente
-  await addDoc(collection(db, COL_CASH), {
-    type:          'in',
-    amount:        total,
-    concept:       `Venta #${String(receiptNumber).slice(-6)}`,
-    saleId:        saleRef.id,
-    paymentMethod, // guardamos el método para desglosar caja por tipo
-    userId,
-    createdAt:     serverTimestamp(),
+  // Todo en UNA transacción: stock + venta + ingreso en caja.
+  // Si algo falla, no queda nada a medias (ni stock descontado sin venta, ni venta sin caja).
+  await runTransaction(db, async (tx) => {
+    // 1. Lecturas primero (Firestore exige todas las lecturas antes de cualquier escritura)
+    const stockItems = items.filter(isStockItem)
+    const snaps = await Promise.all(stockItems.map((i) => tx.get(doc(db, COL_PROD, i.productId))))
+
+    // 2. Validar stock
+    snaps.forEach((snap, idx) => {
+      const item = stockItems[idx]
+      if (!snap.exists()) throw new Error(`Producto no encontrado: ${item.name}`)
+      const currentStock = snap.data().stock ?? 0
+      if (currentStock < item.qty)
+        throw new Error(`Stock insuficiente para "${item.name}". Disponible: ${currentStock}, requerido: ${item.qty}`)
+    })
+
+    // 3. Snapshot histórico de precio/costo
+    const snapById = new Map(stockItems.map((i, idx) => [i.productId, snaps[idx]]))
+    const itemsWithSnapshot = items.map((item) => {
+      if (!isStockItem(item)) {
+        // Servicio: el costo viene del ítem (anillado lo calcula); si no, 0
+        return { ...item, priceAtSale: item.price, costAtSale: item.cost ?? 0, unit: 'servicio' }
+      }
+      const data = snapById.get(item.productId).data()
+      return {
+        ...item,
+        priceAtSale: item.price,
+        costAtSale:  data.cost ?? 0,
+        unit:        data.unit || 'unidad',
+      }
+    })
+
+    // 4. Escrituras
+    stockItems.forEach((item, idx) => {
+      const currentStock = snaps[idx].data().stock ?? 0
+      tx.update(doc(db, COL_PROD, item.productId), { stock: currentStock - item.qty })
+    })
+    tx.set(saleRef, {
+      items:        itemsWithSnapshot,
+      total,
+      subtotal:     subtotal || total,
+      discount:     discount || 0,
+      paymentMethod,
+      userId,
+      receipt:      receiptNumber,
+      status:       'completed',
+      voidReason:   null,
+      voidedAt:     null,
+      voidedBy:     null,
+      createdAt:    serverTimestamp(),
+    })
+    tx.set(cashRef, {
+      type:          'in',
+      amount:        total,
+      concept:       `Venta #${String(receiptNumber).slice(-6)}`,
+      saleId:        saleRef.id,
+      paymentMethod, // para desglosar caja por medio de pago
+      userId,
+      createdAt:     serverTimestamp(),
+    })
   })
 
   return saleRef
 }
 
 export const voidSale = async ({ saleId, reason, userId }) => {
-  const saleSnap = await getDoc(doc(db, COL, saleId))
-  if (!saleSnap.exists()) throw new Error('Venta no encontrada')
-  const sale = saleSnap.data()
-  if (sale.status === 'void') throw new Error('Esta venta ya fue anulada')
+  const saleDocRef = doc(db, COL, saleId)
+  const cashRef    = doc(collection(db, COL_CASH))
 
   await runTransaction(db, async (tx) => {
-    for (const item of sale.items || []) {
-      if (!item.productId) continue
-      const ref  = doc(db, COL_PROD, item.productId)
-      const snap = await tx.get(ref)
-      if (!snap.exists()) continue
-      tx.update(ref, { stock: (snap.data().stock ?? 0) + item.qty })
-    }
-    tx.update(doc(db, COL, saleId), {
+    // Lecturas primero
+    const saleSnap = await tx.get(saleDocRef)
+    if (!saleSnap.exists()) throw new Error('Venta no encontrada')
+    const sale = saleSnap.data()
+    if (sale.status === 'void') throw new Error('Esta venta ya fue anulada')
+
+    const stockItems = (sale.items || []).filter(isStockItem)
+    const snaps = await Promise.all(stockItems.map((i) => tx.get(doc(db, COL_PROD, i.productId))))
+
+    // Escrituras: devolver stock, marcar anulada, egreso en caja
+    stockItems.forEach((item, idx) => {
+      if (!snaps[idx].exists()) return
+      tx.update(doc(db, COL_PROD, item.productId), { stock: (snaps[idx].data().stock ?? 0) + item.qty })
+    })
+    tx.update(saleDocRef, {
       status:     'void',
       voidReason: reason,
       voidedAt:   serverTimestamp(),
       voidedBy:   userId,
     })
-  })
-
-  await addDoc(collection(db, COL_CASH), {
-    type:      'out',
-    amount:    sale.total,
-    concept:   `Anulación venta #${String(sale.receipt || saleId).slice(-6)} · ${reason}`,
-    saleId,
-    userId,
-    createdAt: serverTimestamp(),
+    tx.set(cashRef, {
+      type:          'out',
+      amount:        sale.total,
+      concept:       `Anulación venta #${String(sale.receipt || saleId).slice(-6)} · ${reason}`,
+      saleId,
+      paymentMethod: sale.paymentMethod || null, // para que el cierre sepa si sale del efectivo
+      userId,
+      createdAt:     serverTimestamp(),
+    })
   })
 }
 

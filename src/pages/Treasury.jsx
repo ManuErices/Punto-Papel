@@ -311,12 +311,13 @@ export default function Treasury() {
 
   const load = async () => {
     const { from, to } = dateRange.getRange()
-    const [e, s, c] = await Promise.all([
+    const [e, s, c, o] = await Promise.all([
       getCashflowToday(),
       getSalesByRange(from, to),
       getCashCloses(),
+      getTodayCashOpen(),
     ])
-    setEntries(e); setSales(s); setCloses(c)
+    setEntries(e); setSales(s); setCloses(c); setCashOpen(o)
   }
 
   useEffect(() => { load() }, [dateRange.preset])
@@ -326,12 +327,15 @@ export default function Treasury() {
   const balance    = inflows - outflows
   const salesTotal = sales.reduce((a, s) => a + s.total, 0)
 
-  // Solo el efectivo es lo que se cuenta físicamente
-  const cashSales = sales
-    .filter((s) => s.paymentMethod === 'cash')
-    .reduce((a, s) => a + s.total, 0)
+  // Efectivo esperado en el cajón = fondo inicial + movimientos de HOY que tocan efectivo.
+  // - Ventas y anulaciones (tienen saleId): solo si fueron en efectivo.
+  // - Movimientos manuales (sin saleId): se asumen en efectivo.
+  // Las ventas ya generan su propio ingreso en cashflow, así que no se suman aparte.
+  const touchesCash   = (e) => !e.saleId || e.paymentMethod === 'cash'
+  const cashNet       = entries.filter(touchesCash)
+    .reduce((a, e) => a + (e.type === 'in' ? e.amount : -e.amount), 0)
   const fondoInicial  = cashOpen?.amount || 0
-  const expectedCash  = fondoInicial + cashSales + inflows - outflows
+  const expectedCash  = fondoInicial + cashNet
 
   const handleAdd = async () => {
     if (!amount || !concept) return
