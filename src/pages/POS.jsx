@@ -119,12 +119,15 @@ function QuickServiceModal({ service, prices, onAdd, onClose }) {
   )
 }
 
-// Modal de desglose para Anillado: pide hojas + tipo de anillo + tipo de mica,
-// calcula el costo real y sugiere el precio de venta aplicando el margen configurado.
+// Modal de desglose para Anillado.
+// Precio de venta = hojas × precio de impresión (B/N o color, con precio por volumen)
+//                 + (anillo + micas) × margen configurado.
+// El costo real (hojas a costo de papel + anillo + micas) se guarda aparte para reportes.
 function AnilladoModal({ config, onAdd, onClose, onOpenConfig }) {
   const [booklets, setBooklets] = useState('1')
   const [pages, setPages] = useState('')
   const [pageSizeId, setPageSizeId] = useState(config.pageCosts[0]?.id || '')
+  const [printType, setPrintType] = useState('bn') // 'bn' | 'color'
   const [ringId, setRingId] = useState(config.ringTypes[0]?.id || '')
   const [micaId, setMicaId] = useState(config.micaTypes[0]?.id || '')
 
@@ -136,16 +139,24 @@ function AnilladoModal({ config, onAdd, onClose, onOpenConfig }) {
   const ringsNeeded  = qtyBooklets * 1 // 1 anillo por cuadernillo
   const micasNeeded  = qtyBooklets * 2 // 2 micas por cuadernillo (portada + contraportada)
 
-  const pageCost  = (Number(pages) || 0) * qtyBooklets * (pageSize?.cost || 0)
-  const ringCost  = (ring?.cost || 0) * ringsNeeded
-  const micaCost  = (mica?.cost || 0) * micasNeeded
-  const cost      = pageCost + ringCost + micaCost
-  const salePrice = Math.round(cost * config.margin)
+  const totalSheets = (Number(pages) || 0) * qtyBooklets
+  const printSvc    = QUICK_SERVICES.find((q) => q.id === (printType === 'color' ? 'impresion-color' : 'impresion-bn'))
+  const sheetPrice  = getServiceUnitPrice(printSvc, totalSheets) // mismo precio que impresión/fotocopia
+  const pagesPrice  = totalSheets * sheetPrice
+  const isBulk      = totalSheets >= BULK_MIN_QTY
+
+  const pageCost       = totalSheets * (pageSize?.cost || 0) // costo real de papel (para reportes)
+  const ringCost       = (ring?.cost || 0) * ringsNeeded
+  const micaCost       = (mica?.cost || 0) * micasNeeded
+  const materialsCost  = ringCost + micaCost
+  const materialsPrice = Math.round(materialsCost * config.margin)
+  const cost           = pageCost + materialsCost
+  const salePrice      = pagesPrice + materialsPrice
   const canAdd    = qtyBooklets > 0 && Number(pages) > 0 && pageSize && ring
 
   const handleAdd = () => {
     if (!canAdd) return
-    const parts = [`${pages} hojas ${pageSize.name}`, ring.name]
+    const parts = [`${pages} hojas ${pageSize.name} ${printType === 'color' ? 'color' : 'B/N'}`, ring.name]
     if (mica && mica.cost > 0) parts.push(mica.name)
     const label = qtyBooklets > 1
       ? `Anillado x${qtyBooklets} (${parts.join(', ')})`
@@ -209,10 +220,23 @@ function AnilladoModal({ config, onAdd, onClose, onOpenConfig }) {
                   text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30">
                 {config.pageCosts.length === 0 && <option value="">Sin tamaños</option>}
                 {config.pageCosts.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name} ({fmt(p.cost)})</option>
+                  <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="flex gap-1.5">
+            {[{ key: 'bn', label: 'Blanco y negro' }, { key: 'color', label: 'Color' }].map((t) => (
+              <button key={t.key} type="button" onClick={() => setPrintType(t.key)}
+                className={`flex-1 h-9 rounded-xl text-[12px] font-medium transition-all border ${
+                  printType === t.key
+                    ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30'
+                    : 'bg-black/[0.04] dark:bg-white/[0.05] text-gray-500 dark:text-white/40 border-black/[0.08] dark:border-white/[0.08]'
+                }`}>
+                {t.label}
+              </button>
+            ))}
           </div>
 
           <div className="flex flex-col gap-1">
@@ -241,19 +265,27 @@ function AnilladoModal({ config, onAdd, onClose, onOpenConfig }) {
             </select>
           </div>
 
-          {cost > 0 && (
+          {salePrice > 0 && (
             <div className="flex flex-col gap-1 px-3 py-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.04]">
+              {totalSheets > 0 && (
+                <div className="flex justify-between text-[11px] text-gray-500 dark:text-white/40">
+                  <span>
+                    {totalSheets} hoja{totalSheets !== 1 ? 's' : ''} {printType === 'color' ? 'color' : 'B/N'} × {fmt(sheetPrice)}
+                    {isBulk ? ' · por volumen' : ''}
+                  </span>
+                  <span className="tabular-nums">{fmt(pagesPrice)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-[11px] text-gray-500 dark:text-white/40">
-                <span>{ringsNeeded} anillo{ringsNeeded !== 1 ? 's' : ''} · {micasNeeded} mica{micasNeeded !== 1 ? 's' : ''}</span>
-                <span className="tabular-nums">{fmt(ringCost + micaCost)}</span>
-              </div>
-              <div className="flex justify-between text-[11px] text-gray-500 dark:text-white/40">
-                <span>Costo total</span>
-                <span className="tabular-nums">{fmt(cost)}</span>
+                <span>
+                  {ringsNeeded} anillo{ringsNeeded !== 1 ? 's' : ''} · {micasNeeded} mica{micasNeeded !== 1 ? 's' : ''}
+                  {' '}({fmt(materialsCost)} × {Math.round(config.margin * 100)}%)
+                </span>
+                <span className="tabular-nums">{fmt(materialsPrice)}</span>
               </div>
               <div className="flex justify-between items-center pt-1 mt-1 border-t border-black/[0.06] dark:border-white/[0.06]">
                 <span className="text-[12px] text-indigo-600 dark:text-indigo-400">
-                  Precio de venta ({Math.round(config.margin * 100)}%)
+                  Precio de venta
                 </span>
                 <span className="text-[18px] font-semibold text-indigo-600 dark:text-indigo-400 tabular-nums">
                   {fmt(salePrice)}
@@ -330,7 +362,7 @@ function AnilladoConfigModal({ config, onSave, onClose }) {
         </div>
 
         {[
-          ['pageCosts', 'Costo por hoja (según tamaño)', 'page'],
+          ['pageCosts', 'Costo real por hoja (solo para reportes — el cobro usa el precio de impresión)', 'page'],
           ['ringTypes', 'Tipos de anillo', 'ring'],
           ['micaTypes', 'Tipos de mica', 'mica'],
         ].map(([key, label, prefix]) => (
